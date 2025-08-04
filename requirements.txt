@@ -1,0 +1,35 @@
+# Kali Solana Trading Bot Requirements
+# Core Dependencies
+
+# Solana Blockchain Interaction
+solana>=0.36.0
+solders>=0.26.0
+
+# Data Analysis & Processing
+pandas>=2.0.0
+pandas-ta>=0.3.14b
+
+# HTTP Requests & API Calls
+requests>=2.30.0
+
+# Terminal Output Formatting
+termcolor>=2.0.0
+
+# Task Scheduling
+schedule>=1.2.0
+
+# Cryptocurrency Exchange Integration
+ccxt>=4.0.0
+
+# Standard Library Extensions (usually included with Python)
+# json - built-in
+# time - built-in  
+# datetime - built-in
+# math - built-in
+# os - built-in
+# warnings - built-in
+# pprint - built-in
+# re - built-in
+
+# Optional: For better performance
+# numpy>=1.24.0  # Usually installed with pandas

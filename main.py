@@ -27,7 +27,7 @@ def bot():
         open_positions_df = n.fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
 
     time.sleep(1)
-    # PNL CLOSE FIRST
+    # Get current positions for PNL management
     open_positions_df = n.fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
 
     # Check SOL balance with retries
@@ -67,36 +67,44 @@ def bot():
     cprint(f"Amount: {sol_amount} SOL", 'white', 'on_light_blue')
 
 
-####### ✅ RISK MANAGEMENT ENABLED - PROFIT TARGET: 50% | STOP LOSS: 60%
+####### 🎯 DYNAMIC STRATEGY ENGINE - TIERED EXITS & SMART SIZING
 
-    # Check for winning positions (50% profit target)
-    open_positions_count = open_positions_df.shape[0]
-    winning_positions_df = open_positions_df[open_positions_df['USD Value'] > SELL_AT_MULTIPLE * USDC_SIZE]
+    # === ADVANCED PNL MANAGEMENT ===
+    if ENABLE_TIERED_EXITS:
+        cprint('🎯 Kali Strategy Engine: Running Advanced Tiered PNL Management', 'white', 'on_blue', attrs=['bold'])
+        n.advanced_pnl_management()
+    else:
+        cprint('📈 Kali: Using Legacy PNL Management', 'white', 'on_cyan')
+        # Legacy PNL management (simplified version)
+        
+        # Check for winning positions (first profit target)
+        open_positions_count = open_positions_df.shape[0]
+        winning_positions_df = open_positions_df[open_positions_df['USD Value'] > SELL_AT_MULTIPLE * USDC_SIZE]
 
-    for index, row in winning_positions_df.iterrows():
-        token_mint_address = row['Mint Address']
-        if token_mint_address not in DO_NOT_TRADE_LIST:
-            cprint(f'🌙 Kali: Winning Position (50% profit) - Token: {token_mint_address}', 'white', 'on_green')
-            n.pnl_close(token_mint_address)
-        cprint('✨ Kali: Done closing winning positions...', 'white', 'on_magenta')
+        for index, row in winning_positions_df.iterrows():
+            token_mint_address = row['Mint Address']
+            if token_mint_address not in DO_NOT_TRADE_LIST:
+                cprint(f'🌙 Kali: Winning Position (50% profit) - Token: {token_mint_address}', 'white', 'on_green')
+                n.pnl_close(token_mint_address)
+            cprint('✨ Kali: Done closing winning positions...', 'white', 'on_magenta')
 
-    # Check for losing positions (60% stop loss)
-    sl_size = ((1+STOP_LOSS_PERCENTAGE) * USDC_SIZE)
-    losing_positions_df = open_positions_df[open_positions_df['USD Value'] < sl_size]
-    losing_positions_df = losing_positions_df[losing_positions_df['USD Value'] != 0]
- 
-    for index, row in losing_positions_df.iterrows():
-        token_mint_address = row['Mint Address']
-        if token_mint_address in DO_NOT_TRADE_LIST:
-            cprint(f'🚫 Kali: Skipping trade for {token_mint_address} (in DO_NOT_TRADE_LIST)', 'white', 'on_red')
-            continue
-        if token_mint_address != USDC_CA:
-            n.pnl_close(token_mint_address)
-           
-    cprint('🌙 Kali: Done closing losing positions.. keep swimming ❤️ 🙏', 'white', 'on_magenta')
+        # Check for losing positions (tightened stop loss)
+        sl_size = ((1+STOP_LOSS_PERCENTAGE) * USDC_SIZE)
+        losing_positions_df = open_positions_df[open_positions_df['USD Value'] < sl_size]
+        losing_positions_df = losing_positions_df[losing_positions_df['USD Value'] != 0]
+     
+        for index, row in losing_positions_df.iterrows():
+            token_mint_address = row['Mint Address']
+            if token_mint_address in DO_NOT_TRADE_LIST:
+                cprint(f'🚫 Kali: Skipping trade for {token_mint_address} (in DO_NOT_TRADE_LIST)', 'white', 'on_red')
+                continue
+            if token_mint_address != USDC_CA:
+                n.pnl_close(token_mint_address)
+               
+        cprint('🌙 Kali: Done with legacy PNL management', 'white', 'on_magenta')
 
 
-####### ✅ RISK MANAGEMENT NOW ACTIVE
+####### 🎯 STRATEGY ENGINE ACTIVE
 
     # Run token scan every time
     cprint(f'🔍 Kali: Running token scan...', 'white', 'on_cyan')

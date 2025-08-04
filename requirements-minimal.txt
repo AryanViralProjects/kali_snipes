@@ -1,0 +1,9 @@
+# Minimal Requirements for Kali Solana Trading Bot
+solana>=0.36.0
+solders>=0.26.0
+pandas>=2.0.0
+pandas-ta>=0.3.14b
+requests>=2.30.0
+termcolor>=2.0.0
+schedule>=1.2.0
+ccxt>=4.0.0

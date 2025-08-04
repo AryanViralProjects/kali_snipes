@@ -6,7 +6,14 @@ import dontshare as d
 from termcolor import cprint
 from config import * 
 import math
-import ccxt 
+import ccxt
+import base64
+import json
+import os
+from solders.keypair import Keypair
+from solders.transaction import VersionedTransaction
+from solana.rpc.api import Client
+from solana.rpc.types import TxOpts, Commitment 
 
 def get_sol_balance(wallet_address):
     """
@@ -67,52 +74,10 @@ def ask_bid(token_mint_address):
         return None  # Return None if there's an error with the API call
 
 def security_check(address):
-
-    ''' gets the security check for a token based on birdeye info and returns it in json
-    
-    decide which to use as filters... 
-    - top10HolderPercent > .3 ... be out... this can be a VARIABLE
-
-    {
-  "data": {
-    "creatorAddress": "8LAnvxpF7kL1iUjDRjmP87xiuyCx4yX3ZRAoDCChKe1L",
-    "creatorOwnerAddress": null,
-    "ownerAddress": null,
-    "ownerOfOwnerAddress": null,
-    "creationTx": "48PniJegRijm7wcm8Ygzw9hDC6fysYrXRr5D1UUcuqUTS8B16Le7A8tvWFLoPYvNSaSyfiynhkz8WFfKJbmhwgcp",
-    "creationTime": 1702086574,
-    "creationSlot": 234822271,
-    "mintTx": "48PniJegRijm7wcm8Ygzw9hDC6fysYrXRr5D1UUcuqUTS8B16Le7A8tvWFLoPYvNSaSyfiynhkz8WFfKJbmhwgcp",
-    "mintTime": 1702086574,
-    "mintSlot": 234822271,
-    "creatorBalance": 22.053403028,
-    "ownerBalance": null,
-    "ownerPercentage": null,
-    "creatorPercentage": 2.2054864219584144e-8,
-    "metaplexUpdateAuthority": "8LAnvxpF7kL1iUjDRjmP87xiuyCx4yX3ZRAoDCChKe1L",
-    "metaplexOwnerUpdateAuthority": null,
-    "metaplexUpdateAuthorityBalance": 22.053403028,
-    "metaplexUpdateAuthorityPercent": 2.2054864219584144e-8,
-    "mutableMetadata": false,
-    "top10HolderBalance": 937114842.9086457,
-    "top10HolderPercent": 0.9371769332953355,
-    "top10UserBalance": 937114842.9086457,
-    "top10UserPercent": 0.9371769332953355,
-    "isTrueToken": null,
-    "totalSupply": 999933747.4232626,
-    "preMarketHolder": [],
-    "lockInfo": null,
-    "freezeable": null,
-    "freezeAuthority": null,
-    "transferFeeEnable": null,
-    "transferFeeData": null,
-    "isToken2022": false,
-    "nonTransferable": null
-  },
-  "success": true,
-  "statusCode": 200
-}
-
+    '''
+    Security check using upgraded Birdeye API
+    Returns comprehensive security data including:
+    - Freeze authority, top holder %, mutable metadata, token type
     '''
 
     API_KEY = d.birdeye
@@ -123,16 +88,534 @@ def security_check(address):
     if response.status_code == 200:
         security_data = response.json()  # Return the JSON response if the call is successful
         if security_data and 'data' in security_data:
-            # In the context of this code, get('freezeable', False) serves to handle cases where the key 'freezeable' might not be present in the JSON data. 
-            # Here's why False is used as the default:
-            # Safe Default: Using False ensures that if the 'freezeable' key is absent, the code will not mistakenly consider the token to be freezeable. 
-            # It assumes a non-freezeable state unless explicitly indicated otherwise.
-            if security_data['data'].get('freezeable', False):  # Check if the token is freezeable
+            # Check if the token is freezeable (has freeze authority)
+            if security_data['data'].get('freezeable', False):
                 print(f"* {address[-4:]} is freezeable. Dropping.")
                 return None  # Return None to indicate the token should be dropped
         return security_data
     else:
+        print(f"* {address[-4:]} security check failed (HTTP {response.status_code}). Dropping.")
         return None  # Return None if there's an error with the API call
+
+
+def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
+    """
+    🧠 KALI INTELLIGENCE ENGINE: Performs rapid, pre-trade analysis of a token.
+    
+    This function combines security checks, liquidity analysis, and deployer history
+    to instantly filter out scams and low-quality tokens before execution.
+    
+    Returns True if the token passes all checks, False otherwise.
+    """
+    cprint(f"🔬 Kali Intelligence: Vetting token {token_address[-6:]}", 'yellow', attrs=['bold'])
+
+    # === Birdeye Security Check ===
+    try:
+        sec_url = f"https://public-api.birdeye.so/defi/token_security?address={token_address}"
+        sec_headers = {"X-API-KEY": birdeye_api_key}
+        sec_response = requests.get(sec_url, headers=sec_headers, timeout=5)
+        
+        if sec_response.status_code != 200:
+            cprint(f"   🚨 VETTING FAILED: Birdeye security API error (Code: {sec_response.status_code})", 'red')
+            return False
+            
+        security_data = sec_response.json().get('data', {})
+        if not security_data:
+            cprint("   🚨 VETTING FAILED: No security data returned from Birdeye", 'red')
+            return False
+
+        # --- Critical Security Filters ---
+        if security_data.get('isToken2022'):
+            cprint("   🚨 VETTING FAILED: Token 2022 Program detected", 'red')
+            return False
+
+        if security_data.get('mutableMetadata'):
+            cprint("   🚨 VETTING FAILED: Metadata is mutable", 'red')
+            return False
+
+        if security_data.get('freezeAuthority') is not None:
+            cprint("   🚨 VETTING FAILED: Token is freezable", 'red')
+            return False
+        
+        top_10_pct = security_data.get('top10HolderPercent', 1.0)
+        if top_10_pct > MAX_TOP10_HOLDER_PERCENT:
+            cprint(f"   🚨 VETTING FAILED: Top 10 holders have {top_10_pct:.2%} (>{MAX_TOP10_HOLDER_PERCENT:.1%})", 'red')
+            return False
+            
+        cprint("   ✅ Security checks passed", 'green')
+            
+    except requests.exceptions.RequestException as e:
+        cprint(f"   🚨 VETTING FAILED: Network error during security check: {e}", 'red')
+        return False
+        
+    # === Birdeye Market Overview Check ===
+    try:
+        overview_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
+        overview_headers = {"X-API-KEY": birdeye_api_key}
+        overview_response = requests.get(overview_url, headers=overview_headers, timeout=5)
+        
+        if overview_response.status_code != 200:
+            cprint(f"   🚨 VETTING FAILED: Birdeye overview API error (Code: {overview_response.status_code})", 'red')
+            return False
+        
+        overview_data = overview_response.json().get('data', {})
+        if not overview_data:
+            cprint("   🚨 VETTING FAILED: No overview data returned from Birdeye", 'red')
+            return False
+            
+        liquidity = overview_data.get('liquidity', 0)
+        market_cap = overview_data.get('mc', 0)
+        
+        # --- Market Quality Checks ---
+        if liquidity < MIN_LIQUIDITY:
+            cprint(f"   🚨 VETTING FAILED: Insufficient liquidity (${liquidity:,.2f} < ${MIN_LIQUIDITY:,.2f})", 'red')
+            return False
+            
+        if market_cap > MAX_MARKET_CAP:
+            cprint(f"   🚨 VETTING FAILED: Market cap too high (${market_cap:,.2f} > ${MAX_MARKET_CAP:,.2f})", 'red')
+            return False
+
+        cprint(f"   ✅ Market checks passed (Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'green')
+
+    except requests.exceptions.RequestException as e:
+        cprint(f"   🚨 VETTING FAILED: Network error during overview check: {e}", 'red')
+        return False
+
+    # === Deployer History Check ===
+    deployer = get_deployer_address(token_address, birdeye_api_key)
+    if check_deployer_blacklist(deployer):
+        # The check_deployer_blacklist function already prints the reason
+        return False
+
+    if deployer:
+        cprint(f"   ✅ Deployer check passed: {deployer[-6:]}", 'green')
+    else:
+        cprint("   ⚠️ Could not verify deployer (proceeding anyway)", 'yellow')
+
+    cprint(f"   🎯 INTELLIGENCE VETTING PASSED: Token {token_address[-6:]} approved for trading!", 'white', 'on_green', attrs=['bold'])
+    return True
+
+
+def get_deployer_address(token_address, birdeye_api_key):
+    """
+    Gets the creator/deployer address of a token from Birdeye.
+    Returns the deployer address or None if unavailable.
+    """
+    try:
+        url = f"https://public-api.birdeye.so/defi/token_security?address={token_address}"
+        headers = {"X-API-KEY": birdeye_api_key}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json().get('data', {})
+            return data.get('creatorAddress') or data.get('deployer')
+    except Exception as e:
+        cprint(f"   ⚠️ Could not get deployer address: {e}", 'yellow')
+    return None
+
+
+def check_deployer_blacklist(deployer_address):
+    """
+    Checks if a deployer wallet is on the blacklist.
+    Returns True if blacklisted, False otherwise.
+    """
+    if not deployer_address:
+        return False  # Can't check a null address
+        
+    try:
+        import os
+        blacklist_file = './data/deployer_blacklist.txt'
+        
+        if not os.path.exists(blacklist_file):
+            # Create empty blacklist file if it doesn't exist
+            with open(blacklist_file, 'w') as f:
+                f.write("# Deployer wallet blacklist - one address per line\n")
+                f.write("# Format: wallet_address,reason\n")
+            return False
+        
+        with open(blacklist_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # Handle both formats: "address" or "address,reason"
+                    blacklisted_address = line.split(',')[0].strip()
+                    if deployer_address == blacklisted_address:
+                        reason = line.split(',')[1].strip() if ',' in line else "blacklisted deployer"
+                        cprint(f"   🚨 VETTING FAILED: Deployer {deployer_address[-6:]} is blacklisted ({reason})", 'red', attrs=['bold'])
+                        return True
+                        
+    except Exception as e:
+        cprint(f"   ⚠️ Error checking deployer blacklist: {e}", 'yellow')
+        return False
+        
+    return False
+
+
+def add_deployer_to_blacklist(deployer_address, reason="manual_add"):
+    """
+    Adds a deployer address to the blacklist with optional reason.
+    """
+    if not deployer_address:
+        return
+        
+    try:
+        import os
+        blacklist_file = './data/deployer_blacklist.txt'
+        
+        # Check if already exists
+        if check_deployer_blacklist(deployer_address):
+            cprint(f"   ⚠️ Deployer {deployer_address[-6:]} already blacklisted", 'yellow')
+            return
+            
+        # Create directory if it doesn't exist
+        os.makedirs('./data', exist_ok=True)
+        
+        with open(blacklist_file, 'a') as f:
+            f.write(f"{deployer_address},{reason}\n")
+            
+        cprint(f"   🚫 Added deployer {deployer_address[-6:]} to blacklist (reason: {reason})", 'red')
+        
+    except Exception as e:
+        cprint(f"   ❌ Error adding deployer to blacklist: {e}", 'red')
+
+
+def load_position_states():
+    """
+    🎯 KALI STRATEGY ENGINE: Loads the state of all open positions from JSON file.
+    Returns dictionary with position states for tiered profit management.
+    """
+    try:
+        if not os.path.exists(OPEN_POSITIONS_STATE_FILE):
+            # Create empty state file if it doesn't exist
+            os.makedirs('./data', exist_ok=True)
+            with open(OPEN_POSITIONS_STATE_FILE, 'w') as f:
+                json.dump({}, f, indent=4)
+            return {}
+            
+        with open(OPEN_POSITIONS_STATE_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        cprint(f"⚠️ Kali Strategy: Error loading position states: {e}", 'yellow')
+        return {}
+
+
+def save_position_states(states):
+    """
+    🎯 KALI STRATEGY ENGINE: Saves the state of all open positions to JSON file.
+    """
+    try:
+        os.makedirs('./data', exist_ok=True)
+        with open(OPEN_POSITIONS_STATE_FILE, 'w') as f:
+            json.dump(states, f, indent=4)
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error saving position states: {e}", 'red')
+
+
+def record_new_position(token_address, buy_size_usdc, liquidity=0):
+    """
+    🎯 KALI STRATEGY ENGINE: Records a new position in the state tracking system.
+    Called immediately after a successful buy to enable tiered profit management.
+    """
+    try:
+        states = load_position_states()
+        
+        if token_address not in states:
+            states[token_address] = {
+                "initial_investment_usdc": float(buy_size_usdc),
+                "initial_liquidity": float(liquidity),
+                "tiers_sold": [],  # List to track which profit tiers have been executed
+                "entry_timestamp": time.time(),
+                "total_sold_usdc": 0.0,  # Track total USDC received from sales
+                "strategy_type": "tiered_dynamic"
+            }
+            save_position_states(states)
+            
+            cprint(f"📊 Kali Strategy: Position recorded - ${buy_size_usdc:.2f} into {token_address[-6:]}", 'white', 'on_green')
+            cprint(f"   Entry LP: ${liquidity:,.0f} | Tiers: {len(SELL_TIERS)} levels", 'green')
+        else:
+            cprint(f"⚠️ Kali Strategy: Position {token_address[-6:]} already tracked", 'yellow')
+            
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error recording position: {e}", 'red')
+
+
+def update_position_tier_sold(token_address, tier_index, sell_amount_usdc):
+    """
+    🎯 KALI STRATEGY ENGINE: Records that a profit tier has been executed.
+    """
+    try:
+        states = load_position_states()
+        
+        if token_address in states:
+            if tier_index not in states[token_address]['tiers_sold']:
+                states[token_address]['tiers_sold'].append(tier_index)
+                states[token_address]['total_sold_usdc'] += float(sell_amount_usdc)
+                save_position_states(states)
+                
+                tier_name = SELL_TIERS[tier_index]['name'] if tier_index < len(SELL_TIERS) else f"Tier {tier_index + 1}"
+                cprint(f"💰 Kali Strategy: {tier_name} executed for {token_address[-6:]} (+${sell_amount_usdc:.2f})", 'white', 'on_green')
+        else:
+            cprint(f"⚠️ Kali Strategy: Position {token_address[-6:]} not found in tracking", 'yellow')
+            
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error updating tier: {e}", 'red')
+
+
+def remove_position_state(token_address):
+    """
+    🎯 KALI STRATEGY ENGINE: Removes a position's state upon full exit.
+    Called when position is completely closed (stop-loss or final tier).
+    """
+    try:
+        states = load_position_states()
+        
+        if token_address in states:
+            # Log final performance before removal
+            state = states[token_address]
+            initial = state.get('initial_investment_usdc', 0)
+            total_sold = state.get('total_sold_usdc', 0)
+            tiers_executed = len(state.get('tiers_sold', []))
+            
+            profit_loss = total_sold - initial
+            profit_percent = (profit_loss / initial * 100) if initial > 0 else 0
+            
+            cprint(f"📊 Kali Strategy: Closing {token_address[-6:]} | P&L: ${profit_loss:+.2f} ({profit_percent:+.1f}%)", 'white', 'on_blue')
+            cprint(f"   Tiers executed: {tiers_executed}/{len(SELL_TIERS)} | Total sold: ${total_sold:.2f}", 'blue')
+            
+            del states[token_address]
+            save_position_states(states)
+        else:
+            cprint(f"⚠️ Kali Strategy: Position {token_address[-6:]} not found for removal", 'yellow')
+            
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error removing position state: {e}", 'red')
+
+
+def get_position_performance_summary():
+    """
+    🎯 KALI STRATEGY ENGINE: Get summary of all tracked positions.
+    """
+    try:
+        states = load_position_states()
+        if not states:
+            return "No positions currently tracked"
+            
+        summary = []
+        total_invested = 0
+        total_current_value = 0
+        
+        for token, state in states.items():
+            initial = state.get('initial_investment_usdc', 0)
+            sold = state.get('total_sold_usdc', 0)
+            tiers = len(state.get('tiers_sold', []))
+            
+            total_invested += initial
+            total_current_value += sold  # Simplified - would need current position value
+            
+            summary.append(f"{token[-6:]}: ${initial:.1f} → ${sold:.1f} ({tiers}/{len(SELL_TIERS)} tiers)")
+            
+        return f"Positions: {len(states)} | Invested: ${total_invested:.1f} | " + " | ".join(summary[:3])
+        
+    except Exception as e:
+        return f"Error getting summary: {e}"
+
+
+def calculate_dynamic_position_size(token_address, liquidity):
+    """
+    🎯 KALI STRATEGY ENGINE: Calculate optimal position size based on liquidity.
+    Returns the USDC amount to spend based on dynamic sizing rules.
+    """
+    try:
+        if not ENABLE_DYNAMIC_SIZING:
+            cprint(f"📏 Kali Strategy: Dynamic sizing disabled, using fixed size ${USDC_SIZE}", 'cyan')
+            return USDC_SIZE
+            
+        if liquidity <= 0:
+            cprint(f"⚠️ Kali Strategy: Invalid liquidity ({liquidity}), using minimum size", 'yellow')
+            return USDC_MIN_BUY_SIZE
+            
+        # Calculate target size as percentage of liquidity
+        target_size = liquidity * USDC_BUY_TARGET_PERCENT_OF_LP
+        
+        # Clamp between min and max bounds
+        actual_size = max(USDC_MIN_BUY_SIZE, min(target_size, USDC_MAX_BUY_SIZE))
+        
+        # Calculate what percentage of LP this represents
+        lp_percentage = (actual_size / liquidity) * 100
+        
+        cprint(f"📏 Kali Strategy: Dynamic sizing for {token_address[-6:]}", 'white', 'on_cyan', attrs=['bold'])
+        cprint(f"   Liquidity: ${liquidity:,.0f} | Target: ${target_size:.2f} | Actual: ${actual_size:.2f}", 'cyan')
+        cprint(f"   LP Impact: {lp_percentage:.3f}% | Size factor: {actual_size/USDC_SIZE:.2f}x", 'cyan')
+        
+        return actual_size
+        
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error calculating dynamic size: {e}", 'red')
+        return USDC_MIN_BUY_SIZE
+
+
+def execute_tiered_sell(token_address, tier_index, current_position_value):
+    """
+    🎯 KALI STRATEGY ENGINE: Execute a specific tier of the profit-taking strategy.
+    Sells a portion of the current holdings based on the tier configuration.
+    """
+    try:
+        if tier_index >= len(SELL_TIERS):
+            cprint(f"⚠️ Kali Strategy: Invalid tier index {tier_index}", 'yellow')
+            return False
+            
+        tier = SELL_TIERS[tier_index]
+        tier_name = tier['name']
+        sell_portion = tier['sell_portion']
+        
+        cprint(f"💰 Kali Strategy: Executing {tier_name} (Tier {tier_index + 1})", 'white', 'on_green', attrs=['bold'])
+        cprint(f"   Selling {sell_portion * 100:.0f}% of current position", 'green')
+        
+        # Get current token balance
+        current_balance = get_position(token_address)
+        if current_balance <= 0:
+            cprint(f"⚠️ Kali Strategy: No position found for {token_address[-6:]}", 'yellow')
+            return False
+            
+        # Calculate amount to sell (portion of current balance)
+        sell_amount = current_balance * sell_portion
+        
+        # Get token decimals and convert to proper format
+        decimals = get_decimals(token_address)
+        sell_amount_lamports = int(sell_amount * (10 ** decimals))
+        
+        cprint(f"📊 Kali Strategy: Tier details for {token_address[-6:]}", 'cyan')
+        cprint(f"   Current balance: {current_balance:.4f} tokens", 'cyan')
+        cprint(f"   Selling: {sell_amount:.4f} tokens ({sell_amount_lamports:,} lamports)", 'cyan')
+        cprint(f"   Position value: ${current_position_value:.2f}", 'cyan')
+        
+        # Execute the market sell
+        try:
+            market_sell(token_address, sell_amount_lamports)
+            
+            # Calculate estimated USDC received (approximate)
+            price = ask_bid(token_address)
+            estimated_usdc = sell_amount * price if price else 0
+            
+            # Record the tier execution
+            update_position_tier_sold(token_address, tier_index, estimated_usdc)
+            
+            cprint(f"✅ Kali Strategy: {tier_name} executed successfully!", 'white', 'on_green', attrs=['bold'])
+            cprint(f"   Estimated USDC received: ${estimated_usdc:.2f}", 'green')
+            
+            return True
+            
+        except Exception as sell_error:
+            cprint(f"❌ Kali Strategy: Tier sell execution failed: {sell_error}", 'red')
+            return False
+            
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error in tiered sell: {e}", 'red')
+        return False
+
+
+def advanced_pnl_management():
+    """
+    🎯 KALI STRATEGY ENGINE: Advanced PNL management with tiered exits and tight stop-losses.
+    
+    This replaces the old simple PNL system with sophisticated profit-taking:
+    - Dynamic stop-losses (-25% instead of -60%)
+    - Multi-tier profit taking (2x, 5x, 11x multipliers)
+    - Position state tracking
+    - Intelligent exit strategies
+    """
+    if not ENABLE_TIERED_EXITS:
+        cprint("📈 Kali Strategy: Tiered exits disabled, using legacy PNL", 'cyan')
+        return
+        
+    cprint("📈 Kali Strategy Engine: Running Advanced PNL Management", 'white', 'on_blue', attrs=['bold'])
+    
+    try:
+        # Get current wallet holdings
+        open_positions_df = fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
+        position_states = load_position_states()
+        
+        if open_positions_df.empty and not position_states:
+            cprint("📊 Kali Strategy: No positions to manage", 'cyan')
+            return
+            
+        # Create wallet mints set for quick lookup
+        wallet_mints = set(open_positions_df['Mint Address']) if not open_positions_df.empty else set()
+        
+        # Clean up state for positions no longer in wallet
+        for mint in list(position_states.keys()):
+            if mint not in wallet_mints:
+                cprint(f'👻 Kali Strategy: Position {mint[-6:]} no longer in wallet, removing from tracking', 'yellow')
+                remove_position_state(mint)
+                continue
+                
+        # Process each tracked position
+        positions_processed = 0
+        for mint, state in list(position_states.items()):
+            if mint not in wallet_mints:
+                continue
+                
+            positions_processed += 1
+            
+            # Get current position data
+            position_row = open_positions_df[open_positions_df['Mint Address'] == mint].iloc[0]
+            current_usd_value = position_row['USD Value']
+            initial_investment = state['initial_investment_usdc']
+            tiers_sold = state.get('tiers_sold', [])
+            
+            cprint(f"\n🔍 Kali Strategy: Analyzing {mint[-6:]} (${current_usd_value:.2f})", 'white', 'on_cyan')
+            
+            # === 1. STOP-LOSS CHECK (HIGHEST PRIORITY) ===
+            stop_loss_value = initial_investment * (1 + STOP_LOSS_PERCENTAGE)
+            
+            if current_usd_value < stop_loss_value:
+                cprint(f'🚨 Kali Strategy: STOP-LOSS triggered for {mint[-6:]}!', 'white', 'on_red', attrs=['bold'])
+                cprint(f'   Value: ${current_usd_value:.2f} < SL: ${stop_loss_value:.2f}', 'red')
+                cprint(f'   Loss: ${current_usd_value - initial_investment:.2f} ({((current_usd_value / initial_investment - 1) * 100):+.1f}%)', 'red')
+                
+                # Execute full exit
+                kill_switch(mint)
+                remove_position_state(mint)
+                continue
+                
+            # === 2. TIERED TAKE-PROFIT CHECK ===
+            for tier_index, tier in enumerate(SELL_TIERS):
+                tier_profit_value = initial_investment * tier['profit_multiple']
+                tier_name = tier['name']
+                
+                # Check if we hit this tier and haven't sold it yet
+                if current_usd_value >= tier_profit_value and tier_index not in tiers_sold:
+                    profit_percent = ((current_usd_value / initial_investment) - 1) * 100
+                    
+                    cprint(f'🎯 Kali Strategy: {tier_name} HIT for {mint[-6:]}!', 'white', 'on_green', attrs=['bold'])
+                    cprint(f'   Value: ${current_usd_value:.2f} > Target: ${tier_profit_value:.2f}', 'green')
+                    cprint(f'   Profit: ${current_usd_value - initial_investment:.2f} ({profit_percent:+.1f}%)', 'green')
+                    
+                    # Execute the tier sell
+                    success = execute_tiered_sell(mint, tier_index, current_usd_value)
+                    
+                    if success:
+                        # Check if this was the final tier or if we should close remaining position
+                        if tier_index == len(SELL_TIERS) - 1:  # Last tier
+                            cprint(f'🏆 Kali Strategy: Final tier executed for {mint[-6:]}, closing remaining position', 'white', 'on_gold')
+                            kill_switch(mint)  # Close remaining position
+                            remove_position_state(mint)
+                            break
+                    else:
+                        cprint(f'⚠️ Kali Strategy: Tier execution failed for {mint[-6:]}, will retry next cycle', 'yellow')
+                        
+                    # Only execute one tier per cycle per position
+                    break
+                    
+        if positions_processed > 0:
+            cprint(f"📊 Kali Strategy: Processed {positions_processed} positions", 'white', 'on_blue')
+            # Show position summary
+            summary = get_position_performance_summary()
+            cprint(f"   {summary}", 'blue')
+        else:
+            cprint("📊 Kali Strategy: No tracked positions found", 'cyan')
+            
+    except Exception as e:
+        cprint(f"❌ Kali Strategy: Error in advanced PNL management: {e}", 'red')
 
 
 def extract_urls(description):
@@ -481,6 +964,97 @@ def market_buy(token, amount, slippage=SLIPPAGE):
             time.sleep(5)
 
 
+def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client):
+    """
+    KALI SPEED ENGINE: Ultra-fast market buy using Jupiter's v6 API with millisecond-level optimizations.
+    
+    :param token_to_buy: The mint address of the token you want to buy.
+    :param usdc_amount_in_lamports: The amount of USDC to spend, in lamports (e.g., 5 USDC = 5 * 10**6).
+    :param keypair: The solders.keypair.Keypair object for your wallet.
+    :param http_client: The solana.rpc.api.Client object.
+    :return: The transaction signature string if successful, else None.
+    """
+    
+    # USDC Mint Address
+    usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    
+    try:
+        cprint(f"⚡ Kali Speed Engine: FAST BUY initiated for {token_to_buy[-6:]}", 'white', 'on_blue', attrs=['bold'])
+        
+        # 1. Get the quote with optimized parameters
+        quote_url = (
+            f"https://quote-api.jup.ag/v6/quote?"
+            f"inputMint={usdc_mint}"
+            f"&outputMint={token_to_buy}"
+            f"&amount={usdc_amount_in_lamports}"
+            f"&slippageBps=1000"  # 10% slippage for speed (can be adjusted)
+            f"&onlyDirectRoutes=true"  # Use only direct routes for speed
+            f"&excludeDexes=Whirlpool,Raydium%20CLMM"  # Exclude slower DEXes
+        )
+        
+        quote_response = requests.get(quote_url, timeout=5).json()
+        
+        if 'error' in quote_response:
+            cprint(f"🚨 Kali Speed Engine: Quote error for {token_to_buy[-6:]}: {quote_response.get('error')}", 'red')
+            return None
+
+        # 2. Get the swap transaction with high priority
+        swap_url = 'https://quote-api.jup.ag/v6/swap'
+        swap_payload = {
+            "quoteResponse": quote_response,
+            "userPublicKey": str(keypair.pubkey()),
+            "wrapAndUnwrapSol": True,
+            # CRITICAL: High priority fee for fastest inclusion
+            "prioritizationFeeLamports": 50000,  # Higher than normal for speed
+            "dynamicComputeUnitLimit": True,  # Optimize compute units
+            "skipUserAccountsRpcCalls": True  # Skip unnecessary RPC calls for speed
+        }
+        
+        swap_response = requests.post(swap_url, json=swap_payload, timeout=5).json()
+        
+        if 'swapTransaction' not in swap_response:
+            cprint(f"🚨 Kali Speed Engine: Swap error for {token_to_buy[-6:]}: {swap_response.get('error', 'No swap transaction')}", 'red')
+            return None
+
+        # 3. Deserialize, sign, and send with MAXIMUM SPEED settings
+        swap_tx_b64 = swap_response['swapTransaction']
+        raw_tx = base64.b64decode(swap_tx_b64)
+        versioned_tx = VersionedTransaction.from_bytes(raw_tx)
+        
+        # Sign the transaction with your keypair
+        signed_tx = VersionedTransaction(versioned_tx.message, [keypair])
+
+        # CRITICAL: Ultra-fast transmission settings
+        # - skip_preflight=True: No simulation, direct to validator
+        # - processed commitment: Fastest confirmation level
+        opts = TxOpts(
+            skip_preflight=True, 
+            preflight_commitment=Commitment("processed"),
+            max_retries=0  # No retries for speed
+        )
+        
+        cprint(f"🚀 Kali Speed Engine: Transmitting transaction for {token_to_buy[-6:]}", 'yellow', attrs=['bold'])
+        
+        # Send transaction with ultra-fast settings
+        tx_receipt = http_client.send_raw_transaction(bytes(signed_tx), opts=opts)
+        tx_signature = tx_receipt.value
+        
+        cprint(f"✅ Kali Speed Engine: ULTRA-FAST BUY SUCCESS! 🚀", 'white', 'on_green', attrs=['bold'])
+        cprint(f"💎 Token: {token_to_buy[-6:]} | TX: https://solscan.io/tx/{str(tx_signature)}", 'green', attrs=['bold'])
+        
+        return str(tx_signature)
+
+    except requests.exceptions.Timeout:
+        cprint(f"⏰ Kali Speed Engine: Request timeout for {token_to_buy[-6:]}", 'red')
+        return None
+    except requests.exceptions.RequestException as e:
+        cprint(f"🔄 Kali Speed Engine: Request failed for {token_to_buy[-6:]}: {e}", 'red')
+        return None
+    except Exception as e:
+        cprint(f"❌ Kali Speed Engine: Fast buy error for {token_to_buy[-6:]}: {e}", 'red')
+        return None
+
+
 def market_sell(QUOTE_TOKEN, amount, slippage=SLIPPAGE):
 
     import requests
@@ -746,14 +1320,14 @@ def pnl_close(token_mint_address):
         time.sleep(10)
 
 def open_position(token_mint_address):
-    cprint(f'🌙 Kali: Opening position for token: {token_mint_address}', 'white', 'on_blue')
+    cprint(f'🎯 Kali Strategy: Evaluating dynamic position for token: {token_mint_address[-6:]}', 'white', 'on_blue', attrs=['bold'])
 
     # Check permanent blacklist first
     try:
         with open(PERMANENT_BLACKLIST, 'r') as f:
             blacklisted = [line.strip() for line in f.readlines()]
             if token_mint_address in blacklisted:
-                cprint(f'⛔ Kali: Token {token_mint_address} is permanently blacklisted, skipping', 'white', 'on_red')
+                cprint(f'⛔ Kali: Token {token_mint_address[-6:]} is permanently blacklisted, skipping', 'white', 'on_red')
                 return
     except FileNotFoundError:
         # If file doesn't exist yet, create it
@@ -762,7 +1336,7 @@ def open_position(token_mint_address):
     # First check if we already have ANY position
     initial_balance = get_position(token_mint_address)
     if initial_balance > 0:
-        cprint(f'⚠️ Kali: Already have position in {token_mint_address}, adding to closed positions', 'white', 'on_red')
+        cprint(f'⚠️ Kali: Already have position in {token_mint_address[-6:]}, adding to closed positions', 'white', 'on_red')
         with open(CLOSED_POSITIONS_TXT, 'a') as f:
             f.write(f'{token_mint_address}\n')
         return
@@ -771,33 +1345,45 @@ def open_position(token_mint_address):
     with open(CLOSED_POSITIONS_TXT, 'r') as f:
         closed_positions = [line.strip() for line in f.readlines()]
         if token_mint_address in closed_positions:
-            cprint(f'⚠️ Kali: Token {token_mint_address} in closed positions, skipping', 'white', 'on_red')
+            cprint(f'⚠️ Kali: Token {token_mint_address[-6:]} in closed positions, skipping', 'white', 'on_red')
             return
 
-    buying_df = pd.read_csv(READY_TO_BUY_CSV)
-    if token_mint_address not in buying_df['address'].values:
-        cprint(f'⚠️ Kali: Token {token_mint_address} not in buying list, skipping', 'white', 'on_red')
+    # === DYNAMIC STRATEGY: GET TOKEN OVERVIEW FOR LIQUIDITY ===
+    cprint(f'📊 Kali Strategy: Fetching liquidity data for dynamic sizing...', 'white', 'on_cyan')
+    token_overview_data = get_token_overview(token_mint_address)
+    if not token_overview_data:
+        cprint(f'⚠️ Kali Strategy: Could not get token overview for {token_mint_address[-6:]}, skipping', 'white', 'on_red')
         return
-    
-    token_info = buying_df[buying_df['address'] == token_mint_address].to_dict(orient='records')[0]
-    token_size = float(USDC_SIZE)
+
+    liquidity = token_overview_data.get('liquidity', 0)
+    if liquidity == 0:
+        cprint(f'⚠️ Kali Strategy: Token {token_mint_address[-6:]} has zero liquidity, skipping', 'white', 'on_red')
+        return
+
+    # === DYNAMIC STRATEGY: CALCULATE POSITION SIZE ===
+    dynamic_buy_size = calculate_dynamic_position_size(token_mint_address, liquidity)
     
     price = ask_bid(token_mint_address)
     if not price:
-        cprint(f'⚠️ Kali: Could not get price for {token_mint_address}, skipping', 'white', 'on_red')
+        cprint(f'⚠️ Kali: Could not get price for {token_mint_address[-6:]}, skipping', 'white', 'on_red')
         return
 
     try:
-        size_needed = int(token_size * 10**6)  # Convert to USDC decimals
-        size_needed = str(size_needed)
+        # Use dynamic size instead of fixed USDC_SIZE
+        size_needed_lamports = int(dynamic_buy_size * 10**6)  # Convert USDC to lamports
+        size_needed_str = str(size_needed_lamports)
 
-        # Try to open position
+        cprint(f'🚀 Kali Strategy: Executing dynamic position', 'white', 'on_green', attrs=['bold'])
+        cprint(f'   Size: ${dynamic_buy_size:.2f} USDC ({size_needed_lamports:,} lamports)', 'green')
+
+        # Try to open position with dynamic sizing
+        execution_success = False
         for i in range(orders_per_open):
-            cprint(f'🎯 Kali: Attempting order {i+1}/{orders_per_open} for {token_mint_address}', 'white', 'on_blue')
+            cprint(f'🎯 Kali: Attempting order {i+1}/{orders_per_open} for {token_mint_address[-6:]}', 'white', 'on_blue')
             
             # Check the return value from market_buy
-            if not market_buy(token_mint_address, size_needed):
-                cprint(f'❌ Kali: Market buy failed for {token_mint_address}, token may be blacklisted', 'white', 'on_red')
+            if not market_buy(token_mint_address, size_needed_str):
+                cprint(f'❌ Kali: Market buy failed for {token_mint_address[-6:]}, token may be blacklisted', 'white', 'on_red')
                 return
                 
             time.sleep(1)
@@ -805,19 +1391,28 @@ def open_position(token_mint_address):
             # Check if we got any position after the order
             current_balance = get_position(token_mint_address)
             if current_balance > 0:
-                cprint(f'✅ Kali: Position opened! Balance: {current_balance}', 'white', 'on_green')
-                # Immediately add to closed positions to prevent re-entry
+                cprint(f'✅ Kali Strategy: Dynamic position opened! Balance: {current_balance}', 'white', 'on_green', attrs=['bold'])
+                
+                # === DYNAMIC STRATEGY: RECORD POSITION STATE FOR TIERED MANAGEMENT ===
+                record_new_position(token_mint_address, dynamic_buy_size, liquidity)
+                
+                # Add to closed positions to prevent re-entry
                 with open(CLOSED_POSITIONS_TXT, 'a') as f:
                     f.write(f'{token_mint_address}\n')
-                return
+                
+                execution_success = True
+                break
+
+        if execution_success:
+            return
 
     except Exception as e:
-        cprint(f'❌ Kali: Order failed: {str(e)}', 'white', 'on_red')
+        cprint(f'❌ Kali Strategy: Order failed: {str(e)}', 'white', 'on_red')
         time.sleep(30)
         try:
             for i in range(orders_per_open):
-                if not market_buy(token_mint_address, size_needed):
-                    cprint(f'❌ Kali: Market buy failed on retry for {token_mint_address}', 'white', 'on_red')
+                if not market_buy(token_mint_address, size_needed_str):
+                    cprint(f'❌ Kali: Market buy failed on retry for {token_mint_address[-6:]}', 'white', 'on_red')
                     return
                     
                 time.sleep(1)
@@ -825,13 +1420,17 @@ def open_position(token_mint_address):
                 # Check again after retry
                 current_balance = get_position(token_mint_address)
                 if current_balance > 0:
-                    cprint(f'✅ Kali: Position opened on retry! Balance: {current_balance}', 'white', 'on_green')
+                    cprint(f'✅ Kali Strategy: Position opened on retry! Balance: {current_balance}', 'white', 'on_green')
+                    
+                    # Record position state even on retry
+                    record_new_position(token_mint_address, dynamic_buy_size, liquidity)
+                    
                     with open(CLOSED_POSITIONS_TXT, 'a') as f:
                         f.write(f'{token_mint_address}\n')
                     return
                     
         except:
-            cprint('❌ Kali: Order failed again, logging to closed positions', 'white', 'on_red')
+            cprint('❌ Kali Strategy: Order failed again, logging to closed positions', 'white', 'on_red')
             with open(CLOSED_POSITIONS_TXT, 'a') as f:
                 f.write(f'{token_mint_address}\n')
             return
@@ -839,11 +1438,12 @@ def open_position(token_mint_address):
     # Final balance check
     final_balance = get_position(token_mint_address)
     if final_balance > 0:
-        cprint(f'✅ Kali: Final position check - Balance: {final_balance}', 'white', 'on_green')
+        cprint(f'✅ Kali Strategy: Final position check - Balance: {final_balance}', 'white', 'on_green')
+        record_new_position(token_mint_address, dynamic_buy_size, liquidity)
         with open(CLOSED_POSITIONS_TXT, 'a') as f:
             f.write(f'{token_mint_address}\n')
     else:
-        cprint(f'❌ Kali: No position opened for {token_mint_address}', 'white', 'on_red')
+        cprint(f'❌ Kali Strategy: No position opened for {token_mint_address[-6:]}', 'white', 'on_red')
         # Add to closed positions anyway to prevent retries
         with open(CLOSED_POSITIONS_TXT, 'a') as f:
             f.write(f'{token_mint_address}\n')

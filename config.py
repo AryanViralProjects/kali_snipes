@@ -49,6 +49,46 @@ orders_per_open = 1
 SLIPPAGE = 499  # 5000 is 50%, 500 is 5% and 50 is .5%
 PRIORITY_FEE = 20000 # 200000 is about .035 usd at 150 sol, after a bit of testing 100000 is sufficient and is .02 usd
 
+############### SPEED ENGINE CONFIGURATIONS ###############
+SPEED_ENGINE_PRIORITY_FEE = 50000  # Higher priority fee for ultra-fast execution
+SPEED_ENGINE_SLIPPAGE = 1000  # 10% slippage for speed (adjust as needed)
+SPEED_ENGINE_TIMEOUT = 5  # Request timeout in seconds
+ENABLE_SPEED_ENGINE_LOGGING = True  # Log speed engine snipes to file
+
+############### INTELLIGENCE ENGINE CONFIGURATIONS ###############
+INTELLIGENCE_VETTING_TIMEOUT = 5  # Maximum time for intelligence vetting (seconds)
+ENABLE_DEPLOYER_BLACKLIST = True  # Enable deployer wallet history checking
+AUTO_BLACKLIST_BAD_PERFORMERS = True  # Auto-blacklist tokens that fail after purchase
+INTELLIGENCE_LOG_REJECTIONS = True  # Log all rejected tokens for analysis
+
+############### DYNAMIC STRATEGY ENGINE CONFIGURATIONS ###############
+# Dynamic Position Sizing - buys relative to liquidity instead of fixed amounts
+USDC_BUY_TARGET_PERCENT_OF_LP = 0.005  # Target buying 0.5% of the initial liquidity
+USDC_MAX_BUY_SIZE = 10  # The absolute maximum USDC to spend on a single trade ($10)
+USDC_MIN_BUY_SIZE = 4   # The absolute minimum USDC to spend on a single trade ($4)
+
+# Advanced Tiered Profit Taking Strategy
+STOP_LOSS_PERCENTAGE = -0.25  # TIGHTENED: -25% stop loss (was -60%)
+SELL_AT_MULTIPLE = 1.5  # This becomes our FIRST profit target (50% profit)
+
+# Multi-Tier Profit Taking System
+# Each tier sells a portion of REMAINING position at increasing profit levels
+SELL_TIERS = [
+    # Tier 1: At 100% profit (2x), sell 50% of current holdings
+    {'profit_multiple': 2.0, 'sell_portion': 0.5, 'name': 'First Major Profit'},
+    
+    # Tier 2: At 400% profit (5x), sell 50% of remaining holdings  
+    {'profit_multiple': 5.0, 'sell_portion': 0.5, 'name': 'Moon Shot'},
+    
+    # Tier 3: At 1000% profit (11x), sell 75% of remaining holdings
+    {'profit_multiple': 11.0, 'sell_portion': 0.75, 'name': 'Generational Wealth'}
+]
+
+# Position State Tracking
+OPEN_POSITIONS_STATE_FILE = './data/open_positions_state.json'
+ENABLE_DYNAMIC_SIZING = True  # Enable dynamic position sizing
+ENABLE_TIERED_EXITS = True    # Enable tiered profit taking system
+
 
 
 MAX_TOP10_HOLDER_PERCENT = 0.7 # if over this number, remove
@@ -63,7 +103,7 @@ pnl_start_min= 40
 pnl_end_min = 58
 
 # How many hours back to look for new token launches
-HOURS_TO_LOOK_AT_NEW_LAUNCHES = 0.2
+HOURS_TO_LOOK_AT_NEW_LAUNCHES = 1.0
 
 ############### ohlcv_filter.py configurations ###############
 MAX_SELL_PERCENTAGE = 70

@@ -241,8 +241,10 @@ def get_jupiter_tokens():
     # Convert to DataFrame
     df = pd.DataFrame(tokens)
     
-    # Convert created_at to timestamp (Jupiter timestamps are in UTC)
-    df['timestamp'] = pd.to_datetime(df['created_at'].astype(int), unit='s', utc=True)
+    # Jupiter API doesn't provide creation timestamps
+    # Use current time for all tokens (treat as fresh candidates)
+    current_time = pd.Timestamp.now(tz='UTC')
+    df['timestamp'] = current_time
     
     return df
 
