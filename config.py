@@ -38,7 +38,7 @@ DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8N
 # can also put in closed_position.txt but if the bot gets into a frozen token, closed_positions wont work and youll need to put above
 USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
-MY_SOLANA_ADDERESS =  "DpzHzieSLb6WWbgugTAquhxWU2BXcXLgxfLJ4PteBuMN" # PUT YOUR ADDRESS HERE
+MY_SOLANA_ADDERESS =  "B5MYmAaSAyiJ7dLNfyhHNMTyp3oGye6cYPe8h6taU6qp" # PUT YOUR ADDRESS HERE
 USDC_SIZE = 5
 MAX_POSITIONS = 10
 SELL_AT_MULTIPLE = 1.5 # Exit at 50% profit (1.5x the investment) 

@@ -219,7 +219,7 @@ def main():
         cprint("  python intelligence_manager.py rejections         # View recent rejections", 'cyan')
         cprint("  python intelligence_manager.py add <address> <reason>  # Add deployer to blacklist", 'cyan')
         cprint("\nExamples:", 'white')
-        cprint("  python intelligence_manager.py add 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU rug_pull", 'yellow')
+        cprint("  python intelligence_manager.py add [DEPLOYER_ADDRESS] rug_pull", 'yellow')
         return
     
     command = sys.argv[1].lower()

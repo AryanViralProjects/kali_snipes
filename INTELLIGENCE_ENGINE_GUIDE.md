@@ -127,7 +127,7 @@ Output:
 python intelligence_manager.py blacklist
 
 # Add malicious deployer
-python intelligence_manager.py add 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU rug_pull
+python intelligence_manager.py add [DEPLOYER_ADDRESS] rug_pull
 
 # View recent rejections
 python intelligence_manager.py rejections
@@ -235,7 +235,7 @@ python intelligence_manager.py stats
 python intelligence_manager.py add [DEPLOYER_ADDRESS] [REASON]
 
 # Example
-python intelligence_manager.py add 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU "multiple_rugs"
+python intelligence_manager.py add [DEPLOYER_ADDRESS] "multiple_rugs"
 ```
 
 ---
