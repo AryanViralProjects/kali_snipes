@@ -1,25 +1,63 @@
+# Exclude specific bot folders
+twitter_sniper_bot/
+Sarsa_sniper/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Sensitive files
-dontshare.py
-**/dontshare.py
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
 .env
-.env.*
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Data files
-data/*.csv
-data/*.txt
-
-# IDE specific files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS specific files
+# OS
 .DS_Store
 .DS_Store?
 ._*
@@ -27,3 +65,36 @@ data/*.txt
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Sensitive files
+dontshare.py
+*.key
+*.pem
+*.p12
+
+# Temporary and test files
+test_*.py
+debug_*.py
+fix_*.py
+monitor_*.py
+trigger_*.py
+*_test.py
+check_wallet_balance.py
+simple_balance_check.py
+
+# Documentation drafts and project summaries
+project summary/
+*_SUMMARY.md
+FIXES_*.md
+FIX_*.md
+PNL_TRACKING_DOCUMENTATION.md
+
+# Data files that may contain sensitive information
+data/*.txt
+data/*.csv
+data/*.json
+!data/.gitkeep
+
+# Temporary logs
+*.log
+logs/

@@ -33,7 +33,7 @@ SCAN_MINUTE_MARKS = [0, 15, 30, 45]
 ############### main.py configurations ###############
 
 EXIT_ALL_POSITIONS = False # when this is set to true, we are exiting all positions in FULL
-DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr'] 
+DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'] 
 # to never open a position on tokens like USDC since thats the base, and tokens that may be frozen or broken, place above
 # can also put in closed_position.txt but if the bot gets into a frozen token, closed_positions wont work and youll need to put above
 USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
@@ -51,12 +51,12 @@ PRIORITY_FEE = 20000 # 200000 is about .035 usd at 150 sol, after a bit of testi
 
 ############### SPEED ENGINE CONFIGURATIONS ###############
 SPEED_ENGINE_PRIORITY_FEE = 50000  # Higher priority fee for ultra-fast execution
-SPEED_ENGINE_SLIPPAGE = 1000  # 10% slippage for speed (adjust as needed)
+SPEED_ENGINE_SLIPPAGE = 3000  # 30% slippage for highly volatile new tokens (enhanced for 0x1788 error prevention)
 SPEED_ENGINE_TIMEOUT = 5  # Request timeout in seconds
 ENABLE_SPEED_ENGINE_LOGGING = True  # Log speed engine snipes to file
 
 ############### INTELLIGENCE ENGINE CONFIGURATIONS ###############
-INTELLIGENCE_VETTING_TIMEOUT = 5  # Maximum time for intelligence vetting (seconds)
+INTELLIGENCE_VETTING_TIMEOUT = 50  # Maximum time for intelligence vetting (seconds) - increased for new token indexing
 ENABLE_DEPLOYER_BLACKLIST = True  # Enable deployer wallet history checking
 AUTO_BLACKLIST_BAD_PERFORMERS = True  # Auto-blacklist tokens that fail after purchase
 INTELLIGENCE_LOG_REJECTIONS = True  # Log all rejected tokens for analysis
@@ -91,9 +91,28 @@ ENABLE_TIERED_EXITS = True    # Enable tiered profit taking system
 
 
 
-MAX_TOP10_HOLDER_PERCENT = 0.7 # if over this number, remove
-DROP_IF_MUTABLE_METADATA = False
-DROP_IF_2022_TOKEN_PROGRAM = True
+# === BIRDEYE SECURITY FILTER CONFIGURATIONS ===
+# Based on official Birdeye Security Documentation: https://docs.birdeye.so/docs/security
+
+# CRITICAL SEVERITY FILTERS (Auto-reject if True)
+REJECT_FAKE_TOKENS = True                    # Scam/imitation tokens
+REJECT_NON_RENOUNCED_OWNERSHIP = False       # 🔧 DISABLED: Allow non-renounced ownership (HIGHER RISK)  
+REJECT_HONEYPOTS = True                      # Buyers can't sell
+REJECT_FREEZABLE_TOKENS = True               # Can freeze token transfers
+REJECT_TOKEN_2022 = True                     # New token standard (experimental)
+
+# HIGH RISK FILTERS  
+REJECT_MINTABLE_TOKENS = True                # Can create infinite supply
+REJECT_MUTABLE_METADATA = False              # 🔧 FLEXIBLE: Allow mutable metadata (name/logo changes)
+REJECT_TRANSFER_FEES = True                  # Charges fees on transfers
+MAX_OWNER_PERCENTAGE = 0.30                  # Max % owner can hold (30%)
+MAX_UPDATE_AUTHORITY_PERCENTAGE = 0.30       # Max % update authority can hold (30%)
+MAX_TOP10_HOLDER_PERCENT = 0.70              # Max % top 10 holders can hold (70%)
+MAX_BUY_TAX = 0.05                          # Max buy tax (5%)
+MAX_SELL_TAX = 0.05                         # Max sell tax (5%)
+
+# MEDIUM RISK FILTERS (Configurable)
+ALLOW_MUTABLE_INFO = True                    # 🔧 FLEXIBLE: Allow changeable additional token info
 
 # only scan birdeye for new tokens between these two times in minutes. ex. between the 1 and 15 minute mark of each hour
 scan_start_min = 10
@@ -105,14 +124,29 @@ pnl_end_min = 58
 # How many hours back to look for new token launches
 HOURS_TO_LOOK_AT_NEW_LAUNCHES = 1.0
 
+# Maximum token age to trade (reject tokens older than this)
+MAX_TOKEN_AGE_HOURS = 1.0  # Only trade tokens created within last 4 hours
+
 ############### ohlcv_filter.py configurations ###############
-MAX_SELL_PERCENTAGE = 70
+MAX_SELL_PERCENTAGE = 100 
 MIN_TRADES_LAST_HOUR = 9
 MIN_UNQ_WALLETS2HR = 30
 MIN_VIEW24H = 15
 MIN_LIQUIDITY = 400
 BASE_URL = "https://api.birdeye.so/v1"
 MAX_MARKET_CAP = 30000
+
+############### SEQUENTIAL TRADING MODE ###############
+# When enabled, bot will only trade one position at a time
+# It will wait for current position to hit profit target or stop loss before taking new trades
+ENABLE_SEQUENTIAL_MODE = True  # Set to False for multiple concurrent positions
+
+# Maximum time to hold a position before force closing (hours)
+# Set to 0 to disable time-based exits
+MAX_POSITION_HOLD_TIME = 0  # Disabled by default, rely on profit/loss targets
+
+# Log file for skipped opportunities in sequential mode
+SEQUENTIAL_SKIPPED_LOG = './data/sequential_skipped.txt'
 
 ############### ohlcv_filter.py configurations ###############
 # in this section a lot is hard coded, so dive into the file if you want to make tweaks

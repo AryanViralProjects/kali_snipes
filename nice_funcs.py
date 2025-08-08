@@ -15,6 +15,23 @@ from solders.transaction import VersionedTransaction
 from solana.rpc.api import Client
 from solana.rpc.types import TxOpts, Commitment 
 
+def create_keypair_from_key(key_data):
+    """
+    🔑 KALI: Create keypair from various key formats
+    Handles both base58 strings and comma-separated byte arrays
+    """
+    try:
+        if ',' in str(key_data):
+            # Handle comma-separated byte array format like "86,194,209,..."
+            byte_values = [int(x.strip()) for x in str(key_data).split(',')]
+            return Keypair.from_bytes(bytes(byte_values))
+        else:
+            # Handle base58 string format
+            return Keypair.from_base58_string(key_data)
+    except Exception as e:
+        cprint(f"❌ Kali: Error creating keypair: {e}", 'red')
+        raise
+
 def get_sol_balance(wallet_address):
     """
     Get SOL balance using Helius RPC (more reliable than Birdeye wallet endpoints)
@@ -110,76 +127,264 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
     cprint(f"🔬 Kali Intelligence: Vetting token {token_address[-6:]}", 'yellow', attrs=['bold'])
 
     # === Birdeye Security Check ===
-    try:
-        sec_url = f"https://public-api.birdeye.so/defi/token_security?address={token_address}"
-        sec_headers = {"X-API-KEY": birdeye_api_key}
-        sec_response = requests.get(sec_url, headers=sec_headers, timeout=5)
-        
-        if sec_response.status_code != 200:
-            cprint(f"   🚨 VETTING FAILED: Birdeye security API error (Code: {sec_response.status_code})", 'red')
-            return False
+    max_retries = 8  # Increased to handle very new tokens
+    retry_delay = 5.0  # Longer initial delay for better success rate
+    
+    for attempt in range(max_retries):
+        try:
+            sec_url = f"https://public-api.birdeye.so/defi/token_security?address={token_address}"
+            sec_headers = {"X-API-KEY": birdeye_api_key}
+            sec_response = requests.get(sec_url, headers=sec_headers, timeout=8)
             
-        security_data = sec_response.json().get('data', {})
-        if not security_data:
-            cprint("   🚨 VETTING FAILED: No security data returned from Birdeye", 'red')
-            return False
-
-        # --- Critical Security Filters ---
-        if security_data.get('isToken2022'):
-            cprint("   🚨 VETTING FAILED: Token 2022 Program detected", 'red')
-            return False
-
-        if security_data.get('mutableMetadata'):
-            cprint("   🚨 VETTING FAILED: Metadata is mutable", 'red')
-            return False
-
-        if security_data.get('freezeAuthority') is not None:
-            cprint("   🚨 VETTING FAILED: Token is freezable", 'red')
-            return False
-        
-        top_10_pct = security_data.get('top10HolderPercent', 1.0)
-        if top_10_pct > MAX_TOP10_HOLDER_PERCENT:
-            cprint(f"   🚨 VETTING FAILED: Top 10 holders have {top_10_pct:.2%} (>{MAX_TOP10_HOLDER_PERCENT:.1%})", 'red')
-            return False
-            
-        cprint("   ✅ Security checks passed", 'green')
-            
-    except requests.exceptions.RequestException as e:
-        cprint(f"   🚨 VETTING FAILED: Network error during security check: {e}", 'red')
+            if sec_response.status_code == 200:
+                # Success! Break out of retry loop
+                break
+            elif sec_response.status_code in [555, 404, 500, 502, 503]:
+                # These codes suggest data not ready yet - retry
+                if attempt < max_retries - 1:
+                    cprint(f"   ⏳ Token data not ready (Code: {sec_response.status_code}), retrying in {retry_delay}s... (attempt {attempt + 1})", 'yellow')
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                    continue
+                else:
+                    cprint(f"   🚨 VETTING FAILED: Birdeye security API error after {max_retries} attempts (Code: {sec_response.status_code})", 'red')
+                    return False
+            else:
+                # Other errors (rate limit, auth, etc.) - fail immediately
+                cprint(f"   🚨 VETTING FAILED: Birdeye security API error (Code: {sec_response.status_code})", 'red')
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                cprint(f"   ⏳ Network error, retrying in {retry_delay}s... (attempt {attempt + 1}): {e}", 'yellow')
+                time.sleep(retry_delay)
+                retry_delay *= 1.5
+                continue
+            else:
+                cprint(f"   🚨 VETTING FAILED: Network error after {max_retries} attempts: {e}", 'red')
+                return False
+    
+    # Process the successful response
+    security_data = sec_response.json().get('data', {})
+    if not security_data:
+        cprint("   🚨 VETTING FAILED: No security data returned from Birdeye", 'red')
         return False
+
+    # === CRITICAL SEVERITY SECURITY FILTERS ===
+    # Based on official Birdeye Security Documentation: https://docs.birdeye.so/docs/security
+    
+    # 1. Fake Token Check (Critical)
+    if REJECT_FAKE_TOKENS and security_data.get('fakeToken'):
+        cprint("   🚨 VETTING FAILED: FAKE TOKEN - Scam/imitation detected", 'red')
+        return False
+    
+    # 2. Ownership Renounced Check (Critical) 
+    if not security_data.get('ownershipRenounced', False):
+        if REJECT_NON_RENOUNCED_OWNERSHIP:
+            cprint("   🚨 VETTING FAILED: OWNERSHIP NOT RENOUNCED - Owner can change parameters", 'red')
+            return False
+        else:
+            cprint("   ⚠️ WARNING: OWNERSHIP NOT RENOUNCED - Owner retains control (RISK ACCEPTED)", 'red')
+    
+    # 3. Honeypot Check (Critical)
+    if REJECT_HONEYPOTS and security_data.get('honeypot'):
+        cprint("   🚨 VETTING FAILED: HONEYPOT - Buyers cannot sell", 'red')
+        return False
+    
+    # 4. Freezable Token Check (Critical)
+    if REJECT_FREEZABLE_TOKENS and security_data.get('freezable'):
+        cprint("   🚨 VETTING FAILED: FREEZABLE - Can freeze token transfers", 'red')
+        return False
+        
+    # 5. Freeze Authority Check (Critical)
+    if REJECT_FREEZABLE_TOKENS and security_data.get('freezeAuthority') is not None:
+        cprint("   🚨 VETTING FAILED: FREEZE AUTHORITY EXISTS", 'red')
+        return False
+    
+    # 6. Token 2022 Check (Critical)
+    if REJECT_TOKEN_2022 and security_data.get('isToken2022'):
+        cprint("   🚨 VETTING FAILED: TOKEN 2022 PROGRAM - Experimental standard", 'red')
+        return False
+
+    # === HIGH RISK SECURITY FILTERS ===
+    
+    # 7. Mintable Token Check (High Risk)
+    if REJECT_MINTABLE_TOKENS and security_data.get('mintable'):
+        cprint("   🚨 VETTING FAILED: MINTABLE - Can create infinite supply", 'red')
+        return False
+    
+    # 8. Mutable Metadata Check (High Risk)
+    if security_data.get('mutableMetadata'):
+        if REJECT_MUTABLE_METADATA:
+            cprint("   🚨 VETTING FAILED: MUTABLE METADATA - Can change name/logo", 'red')
+            return False
+        else:
+            cprint("   ⚠️ INFO: MUTABLE METADATA detected - Token can change name/logo (allowed)", 'yellow')
+    
+    # 9. Transfer Fees Check (High Risk)
+    if REJECT_TRANSFER_FEES and security_data.get('transferFees'):
+        cprint("   🚨 VETTING FAILED: TRANSFER FEES - Charges fees on transfers", 'red')
+        return False
+    
+    # 10. Buy Tax Check (High Risk)
+    buy_tax = security_data.get('buyTax', 0)
+    if buy_tax is not None and isinstance(buy_tax, (int, float)) and buy_tax > MAX_BUY_TAX:
+        cprint(f"   🚨 VETTING FAILED: BUY TAX {buy_tax:.1%} > {MAX_BUY_TAX:.1%}", 'red')
+        return False
+    
+    # 11. Sell Tax Check (High Risk)
+    sell_tax = security_data.get('sellTax', 0)
+    if sell_tax is not None and isinstance(sell_tax, (int, float)) and sell_tax > MAX_SELL_TAX:
+        cprint(f"   🚨 VETTING FAILED: SELL TAX {sell_tax:.1%} > {MAX_SELL_TAX:.1%}", 'red')
+        return False
+    
+    # 12. Owner Percentage Check (High Risk)
+    owner_pct = security_data.get('ownerPercentage', 0)
+    if owner_pct is not None and isinstance(owner_pct, (int, float)) and owner_pct > MAX_OWNER_PERCENTAGE:
+        cprint(f"   🚨 VETTING FAILED: OWNER HOLDS {owner_pct:.1%} > {MAX_OWNER_PERCENTAGE:.1%}", 'red')
+        return False
+    
+    # 13. Update Authority Percentage Check (High Risk)
+    ua_pct = security_data.get('updateAuthorityPercentage', 0)
+    if ua_pct is not None and isinstance(ua_pct, (int, float)) and ua_pct > MAX_UPDATE_AUTHORITY_PERCENTAGE:
+        cprint(f"   🚨 VETTING FAILED: UPDATE AUTHORITY HOLDS {ua_pct:.1%} > {MAX_UPDATE_AUTHORITY_PERCENTAGE:.1%}", 'red')
+        return False
+    
+    # 14. Top 10 Holders Check (High Risk)
+    top_10_pct = security_data.get('top10HolderPercent', 1.0)
+    if top_10_pct is not None and isinstance(top_10_pct, (int, float)) and top_10_pct > MAX_TOP10_HOLDER_PERCENT:
+        cprint(f"   🚨 VETTING FAILED: TOP 10 HOLDERS {top_10_pct:.1%} > {MAX_TOP10_HOLDER_PERCENT:.1%}", 'red')
+        return False
+
+    # === MEDIUM RISK FILTERS ===
+    
+    # 15. Mutable Info Check (Medium Risk)
+    if security_data.get('mutableInfo'):
+        if not ALLOW_MUTABLE_INFO:
+            cprint("   ⚠️ VETTING FAILED: MUTABLE INFO - Token info can be changed", 'yellow')
+            return False
+        else:
+            cprint("   ℹ️ INFO: MUTABLE INFO detected - Additional token info can be changed (allowed)", 'cyan')
+        
+    cprint("   ✅ ALL SECURITY CHECKS PASSED", 'green')
         
     # === Birdeye Market Overview Check ===
-    try:
-        overview_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
-        overview_headers = {"X-API-KEY": birdeye_api_key}
-        overview_response = requests.get(overview_url, headers=overview_headers, timeout=5)
-        
-        if overview_response.status_code != 200:
-            cprint(f"   🚨 VETTING FAILED: Birdeye overview API error (Code: {overview_response.status_code})", 'red')
-            return False
-        
-        overview_data = overview_response.json().get('data', {})
-        if not overview_data:
-            cprint("   🚨 VETTING FAILED: No overview data returned from Birdeye", 'red')
-            return False
+    max_retries_overview = 8  # Increased to handle very new tokens
+    retry_delay_overview = 5.0  # Longer initial delay for better success rate
+    
+    for attempt in range(max_retries_overview):
+        try:
+            overview_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
+            overview_headers = {"X-API-KEY": birdeye_api_key}
+            overview_response = requests.get(overview_url, headers=overview_headers, timeout=8)
             
-        liquidity = overview_data.get('liquidity', 0)
-        market_cap = overview_data.get('mc', 0)
-        
-        # --- Market Quality Checks ---
-        if liquidity < MIN_LIQUIDITY:
-            cprint(f"   🚨 VETTING FAILED: Insufficient liquidity (${liquidity:,.2f} < ${MIN_LIQUIDITY:,.2f})", 'red')
-            return False
-            
-        if market_cap > MAX_MARKET_CAP:
-            cprint(f"   🚨 VETTING FAILED: Market cap too high (${market_cap:,.2f} > ${MAX_MARKET_CAP:,.2f})", 'red')
-            return False
-
-        cprint(f"   ✅ Market checks passed (Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'green')
-
-    except requests.exceptions.RequestException as e:
-        cprint(f"   🚨 VETTING FAILED: Network error during overview check: {e}", 'red')
+            if overview_response.status_code == 200:
+                # Success! Break out of retry loop
+                break
+            elif overview_response.status_code in [555, 404, 500, 502, 503]:
+                # These codes suggest data not ready yet - retry
+                if attempt < max_retries_overview - 1:
+                    cprint(f"   ⏳ Overview data not ready (Code: {overview_response.status_code}), retrying in {retry_delay_overview}s... (attempt {attempt + 1})", 'yellow')
+                    time.sleep(retry_delay_overview)
+                    retry_delay_overview *= 1.5  # Exponential backoff
+                    continue
+                else:
+                    cprint(f"   🚨 VETTING FAILED: Birdeye overview API error after {max_retries_overview} attempts (Code: {overview_response.status_code})", 'red')
+                    return False
+            else:
+                # Other errors (rate limit, auth, etc.) - fail immediately
+                cprint(f"   🚨 VETTING FAILED: Birdeye overview API error (Code: {overview_response.status_code})", 'red')
+                return False
+                
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries_overview - 1:
+                cprint(f"   ⏳ Network error on overview, retrying in {retry_delay_overview}s... (attempt {attempt + 1}): {e}", 'yellow')
+                time.sleep(retry_delay_overview)
+                retry_delay_overview *= 1.5
+                continue
+            else:
+                cprint(f"   🚨 VETTING FAILED: Network error during overview check after {max_retries_overview} attempts: {e}", 'red')
+                return False
+    
+    # Process the successful overview response
+    overview_data = overview_response.json().get('data', {})
+    if not overview_data:
+        cprint("   🚨 VETTING FAILED: No overview data returned from Birdeye", 'red')
         return False
+        
+    liquidity = overview_data.get('liquidity', 0)
+    market_cap = overview_data.get('mc', 0)
+    
+    # Ensure values are never None
+    if liquidity is None:
+        liquidity = 0
+    if market_cap is None:
+        market_cap = 0
+    
+    # --- Market Quality Checks ---
+    if isinstance(liquidity, (int, float)) and liquidity < MIN_LIQUIDITY:
+        cprint(f"   🚨 VETTING FAILED: Insufficient liquidity (${liquidity:,.2f} < ${MIN_LIQUIDITY:,.2f})", 'red')
+        return False
+        
+    if isinstance(market_cap, (int, float)) and market_cap > MAX_MARKET_CAP:
+        cprint(f"   🚨 VETTING FAILED: Market cap too high (${market_cap:,.2f} > ${MAX_MARKET_CAP:,.2f})", 'red')
+        return False
+
+    cprint(f"   ✅ Market checks passed (Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'green')
+
+    # === TOKEN AGE CHECK (Prevent trading old tokens) ===
+    try:
+        creation_time = overview_data.get('creation_time') or overview_data.get('createdAt')
+        if creation_time:
+            import time
+            current_time = time.time()
+            # Convert creation_time to timestamp if it's a string
+            if isinstance(creation_time, str):
+                from datetime import datetime
+                try:
+                    # Try parsing various date formats
+                    creation_timestamp = datetime.fromisoformat(creation_time.replace('Z', '+00:00')).timestamp()
+                except:
+                    # If parsing fails, try other common formats
+                    try:
+                        creation_timestamp = datetime.strptime(creation_time, "%Y-%m-%dT%H:%M:%S.%fZ").timestamp()
+                    except:
+                        creation_timestamp = None
+            else:
+                creation_timestamp = creation_time
+            
+            if creation_timestamp:
+                token_age_hours = (current_time - creation_timestamp) / 3600
+                
+                # Reject tokens older than configured limit
+                from config import MAX_TOKEN_AGE_HOURS
+                if token_age_hours > MAX_TOKEN_AGE_HOURS:
+                    cprint(f"   🚨 VETTING FAILED: Token too old ({token_age_hours:.1f}h > {MAX_TOKEN_AGE_HOURS}h)", 'red')
+                    return False
+                else:
+                    cprint(f"   ✅ Token age check passed: {token_age_hours:.1f}h old", 'green')
+            else:
+                # STRICT: If we can't parse creation time, check other indicators
+                if liquidity > 1000000 or market_cap > 1000000:  # $1M+ suggests old token
+                    cprint(f"   🚨 VETTING FAILED: High liquidity/MC suggests old token (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
+                    return False
+                cprint("   🚨 VETTING FAILED: Could not verify token age (strict mode)", 'red')
+                return False
+        else:
+            # Balanced approach: Check liquidity to determine if it's genuinely new
+            if liquidity > 100000 or market_cap > 100000:  # $100K+ suggests established token
+                cprint(f"   🚨 VETTING FAILED: No age data + high metrics = likely old (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
+                return False
+            elif liquidity < 50000:  # Low liquidity suggests genuinely new token
+                cprint(f"   ⚠️ WARNING: No age data but low liquidity (${liquidity:,.0f}) - likely new token, proceeding", 'yellow')
+                # Allow genuinely new tokens with low liquidity to proceed
+            else:
+                # Mid-range liquidity without age data is suspicious
+                cprint(f"   🚨 VETTING FAILED: No age data with moderate liquidity (${liquidity:,.0f}) - too risky", 'red')
+                return False
+    except Exception as age_error:
+        cprint(f"   🚨 VETTING FAILED: Error checking token age: {age_error} (strict mode)", 'red')
+        return False  # Changed from proceeding to failing for safety
 
     # === Deployer History Check ===
     deployer = get_deployer_address(token_address, birdeye_api_key)
@@ -316,7 +521,11 @@ def record_new_position(token_address, buy_size_usdc, liquidity=0):
     Called immediately after a successful buy to enable tiered profit management.
     """
     try:
+        cprint(f"📝 Kali Strategy: Recording new position for {token_address[-6:]}", 'cyan')
+        cprint(f"   Investment: ${buy_size_usdc:.2f}, Liquidity: ${liquidity:,.0f}", 'cyan')
+        
         states = load_position_states()
+        cprint(f"   Current tracked positions: {len(states)}", 'cyan')
         
         if token_address not in states:
             states[token_address] = {
@@ -331,11 +540,14 @@ def record_new_position(token_address, buy_size_usdc, liquidity=0):
             
             cprint(f"📊 Kali Strategy: Position recorded - ${buy_size_usdc:.2f} into {token_address[-6:]}", 'white', 'on_green')
             cprint(f"   Entry LP: ${liquidity:,.0f} | Tiers: {len(SELL_TIERS)} levels", 'green')
+            cprint(f"   Total positions now tracked: {len(states)}", 'green')
         else:
             cprint(f"⚠️ Kali Strategy: Position {token_address[-6:]} already tracked", 'yellow')
             
     except Exception as e:
         cprint(f"❌ Kali Strategy: Error recording position: {e}", 'red')
+        import traceback
+        cprint(f"   Traceback: {traceback.format_exc()}", 'red')
 
 
 def update_position_tier_sold(token_address, tier_index, sell_amount_usdc):
@@ -452,6 +664,160 @@ def calculate_dynamic_position_size(token_address, liquidity):
         cprint(f"❌ Kali Strategy: Error calculating dynamic size: {e}", 'red')
         return USDC_MIN_BUY_SIZE
 
+
+def has_active_positions():
+    """
+    🔒 KALI SEQUENTIAL MODE: Check if there are any active positions.
+    Returns True if any positions are open, False otherwise.
+    FIXED: Calculate USD values properly since raw data has 0 values.
+    """
+    try:
+        # DIRECT CHECK: Look at actual wallet holdings
+        holdings = fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
+        
+        if not holdings.empty:
+            # Filter out USDC, SOL, and any DO_NOT_TRADE tokens
+            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST
+            
+            # Check each holding
+            for _, row in holdings.iterrows():
+                token_address = row['Mint Address']
+                amount = row['Amount']
+                
+                # Skip excluded tokens
+                if token_address in excluded_tokens:
+                    continue
+                
+                # Skip if no amount
+                if amount <= 0:
+                    continue
+                
+                # Calculate USD value since it's 0 in raw data
+                try:
+                    price = ask_bid(token_address)
+                    if price and price > 0:
+                        usd_value = amount * float(price)
+                        
+                        # Skip very small holdings (dust)
+                        if usd_value < 0.5:  # Less than $0.50
+                            continue
+                        
+                        # We found an active position!
+                        cprint(f"   📍 Active position detected: ${usd_value:.2f} of {token_address[-6:]}", 'cyan')
+                        return True
+                except:
+                    # If we can't get price but have amount, assume it's a position
+                    if amount > 0.001:  # More than dust amount
+                        cprint(f"   📍 Active position detected: {amount:.4f} of {token_address[-6:]}", 'cyan')
+                        return True
+        
+        return False
+        
+    except Exception as e:
+        cprint(f"⚠️ Kali Sequential: Error checking positions: {e}", 'yellow')
+        # If there's an error, assume we have positions to be safe
+        return True
+
+def get_active_position_count():
+    """
+    🔢 KALI SEQUENTIAL MODE: Returns the number of active positions.
+    FIXED: Calculate USD values properly to count positions.
+    """
+    try:
+        holdings = fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
+        active_count = 0
+        
+        if not holdings.empty:
+            # Filter out USDC, SOL, and any DO_NOT_TRADE tokens
+            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST
+            
+            for _, row in holdings.iterrows():
+                token_address = row['Mint Address']
+                amount = row['Amount']
+                
+                # Skip excluded tokens
+                if token_address in excluded_tokens:
+                    continue
+                
+                # Skip if no amount
+                if amount <= 0:
+                    continue
+                
+                # Calculate USD value
+                try:
+                    price = ask_bid(token_address)
+                    if price and price > 0:
+                        usd_value = amount * float(price)
+                        if usd_value >= 0.5:  # More than $0.50
+                            active_count += 1
+                except:
+                    # If we can't get price but have amount, count it
+                    if amount > 0.001:
+                        active_count += 1
+                        
+        return active_count
+        
+    except Exception as e:
+        cprint(f"⚠️ Kali Sequential: Error counting positions: {e}", 'yellow')
+        return 0
+
+def wait_for_position_completion():
+    """
+    🕐 KALI SEQUENTIAL MODE: Blocks execution until all positions are closed.
+    """
+    import time
+    
+    while has_active_positions():
+        position_count = get_active_position_count()
+        cprint(f"⏳ Kali Sequential: Waiting for {position_count} position(s) to close...", 'yellow')
+        cprint(f"   Position will close at profit target or stop loss", 'cyan')
+        
+        # Wait 30 seconds before checking again
+        time.sleep(30)
+    
+    cprint("✅ Kali Sequential: All positions closed, ready for next snipe", 'green')
+
+def clean_closed_positions():
+    """
+    🧹 KALI SEQUENTIAL MODE: Clean up fully closed positions from state file.
+    FIXED: Only clean positions that are ACTUALLY closed (not in wallet).
+    """
+    try:
+        states = load_position_states()
+        if not states:
+            return
+            
+        holdings = fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
+        
+        # Get list of tokens we actually hold
+        held_tokens = []
+        if not holdings.empty:
+            held_tokens = holdings['Mint Address'].tolist()
+        
+        tokens_to_remove = []
+        
+        for token_address in states.keys():
+            # Only remove if we DON'T hold this token anymore
+            if token_address not in held_tokens:
+                tokens_to_remove.append(token_address)
+                cprint(f"🧹 Kali Sequential: Will clean {token_address[-6:]} (not in wallet)", 'cyan')
+            else:
+                # Keep it - we still hold this token
+                token_row = holdings[holdings['Mint Address'] == token_address]
+                if not token_row.empty:
+                    value = token_row.iloc[0]['USD Value']
+                    cprint(f"   📍 Keeping {token_address[-6:]} (still held: ${value:.2f})", 'green')
+        
+        # Remove only truly closed positions
+        for token in tokens_to_remove:
+            del states[token]
+        
+        if tokens_to_remove:
+            save_position_states(states)
+            cprint(f"🧹 Cleaned {len(tokens_to_remove)} closed position(s)", 'cyan')
+        
+    except Exception as e:
+        cprint(f"⚠️ Kali Sequential: Error cleaning positions: {e}", 'yellow')
 
 def execute_tiered_sell(token_address, tier_index, current_position_value):
     """
@@ -640,44 +1006,85 @@ def extract_urls(description):
 
 
 def get_token_overview(address):
-    API_KEY = d.birdeye
-    url = f"https://public-api.birdeye.so/defi/token_overview?address={address}"
-    headers = {"X-API-KEY": API_KEY}
-    response = requests.get(url, headers=headers)
-    if response.ok:
-        json_response = response.json()
-        return json_response['data']
-    else:
-        # Return empty dict if there's an error
-        print(f"Error fetching data for address {address}: {response.status_code}")
+    """
+    🎯 KALI: Get token overview data from Birdeye API.
+    Returns dict with liquidity data or empty dict if error.
+    """
+    try:
+        API_KEY = d.birdeye
+        url = f"https://public-api.birdeye.so/defi/token_overview?address={address}"
+        headers = {"X-API-KEY": API_KEY}
+        response = requests.get(url, headers=headers, timeout=8)
+        
+        if response.ok:
+            json_response = response.json()
+            data = json_response.get('data', {})
+            # Ensure liquidity is always a number, never None
+            if data and 'liquidity' in data:
+                if data['liquidity'] is None:
+                    data['liquidity'] = 0
+            return data or {}  # Return empty dict if data is None
+        else:
+            # Return empty dict if there's an error
+            cprint(f"⚠️ Kali: Error fetching overview for {address[-6:]}: {response.status_code}", 'yellow')
+            return {}
+            
+    except Exception as e:
+        cprint(f"⚠️ Kali: Exception in get_token_overview: {e}", 'yellow')
         return {}
     
 
 def get_names_nosave(df):
-    names = []  # List to hold the collected names
+    """
+    💰 KALI: Get token names AND calculate USD values for portfolio display
+    """
+    names = []
+    usd_values = []
 
     for index, row in df.iterrows():
         token_mint_address = row['Mint Address']
+        amount = row['Amount']
+        
+        # Get token overview data (contains name and price info)
         token_data = get_token_overview(token_mint_address)
         
-        # Extract the token name using the 'name' key from the token_data
-        token_name = token_data.get('name', 'N/A')  # Use 'N/A' if name isn't provided
-        #print(f'Name for {token_mint_address[-4:]}: {token_name}')
+        # Extract token name
+        token_name = token_data.get('name', f'Token-{token_mint_address[-6:]}')
         names.append(token_name)
+        
+        # Calculate USD value using Birdeye price
+        try:
+            # Try to get price from token overview first
+            if token_data and 'price' in token_data:
+                price = float(token_data.get('price', 0))
+                usd_value = amount * price
+            else:
+                # Fallback: use ask_bid function for price
+                price = ask_bid(token_mint_address)
+                if price and price > 0:
+                    usd_value = amount * float(price)
+                else:
+                    usd_value = 0.0
+                    
+            usd_values.append(round(usd_value, 2))
+            
+        except Exception as e:
+            cprint(f"⚠️ Kali: Error calculating USD value for {token_name}: {e}", 'yellow')
+            usd_values.append(0.0)
     
-    # Check if 'name' column already exists, update it if it does, otherwise insert it
+    # Update the dataframe with names and calculated USD values
     if 'name' in df.columns:
-        df['name'] = names  # Update existing 'name' column
+        df['name'] = names
     else:
-        df.insert(0, 'name', names)  # Insert 'name' as the first column
+        df.insert(0, 'name', names)
+        
+    # Update USD Value column with calculated values
+    df['USD Value'] = usd_values
 
-    # drop the Mint_Address
-    df.drop('Mint Address', axis=1, inplace=True)
-    df.drop('Amount', axis=1, inplace=True)
-
-    #print(df)
+    # Drop unnecessary columns for display
+    df_display = df.drop(['Mint Address', 'Amount'], axis=1)
     
-    return df
+    return df_display
 
 def get_names(df):
     names = []  # List to hold the collected names
@@ -967,6 +1374,7 @@ def market_buy(token, amount, slippage=SLIPPAGE):
 def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client):
     """
     KALI SPEED ENGINE: Ultra-fast market buy using Jupiter's v6 API with millisecond-level optimizations.
+    Enhanced with error 0x1788 fixes and account pre-validation.
     
     :param token_to_buy: The mint address of the token you want to buy.
     :param usdc_amount_in_lamports: The amount of USDC to spend, in lamports (e.g., 5 USDC = 5 * 10**6).
@@ -981,68 +1389,165 @@ def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client)
     try:
         cprint(f"⚡ Kali Speed Engine: FAST BUY initiated for {token_to_buy[-6:]}", 'white', 'on_blue', attrs=['bold'])
         
-        # 1. Get the quote with optimized parameters
+        # PRE-VALIDATION: Check if we have sufficient USDC balance
+        try:
+            # Get USDC balance using RPC call
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [
+                    str(keypair.pubkey()),
+                    {"mint": usdc_mint},
+                    {"encoding": "jsonParsed"}
+                ]
+            }
+            
+            response = requests.post(d.rpc_url, json=payload, timeout=5)
+            usdc_balance = 0.0
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result'] and data['result']['value']:
+                    for account in data['result']['value']:
+                        parsed_info = account['account']['data']['parsed']['info']
+                        usdc_balance = float(parsed_info['tokenAmount']['uiAmount'] or 0)
+                        break
+            
+            required_usdc = usdc_amount_in_lamports / 1_000_000  # Convert to USDC (6 decimals)
+            
+            if usdc_balance < required_usdc:
+                cprint(f"🚨 Kali Speed Engine: Insufficient USDC balance. Have: {usdc_balance:.2f}, Need: {required_usdc:.2f}", 'red')
+                return None
+                
+            cprint(f"✅ Kali Speed Engine: USDC balance check passed: {usdc_balance:.2f} USDC", 'green')
+        except Exception as balance_error:
+            cprint(f"⚠️ Kali Speed Engine: Balance check failed, proceeding anyway: {balance_error}", 'yellow')
+        
+        # 1. Get the quote with enhanced parameters for volatile tokens
         quote_url = (
             f"https://quote-api.jup.ag/v6/quote?"
             f"inputMint={usdc_mint}"
             f"&outputMint={token_to_buy}"
             f"&amount={usdc_amount_in_lamports}"
-            f"&slippageBps=1000"  # 10% slippage for speed (can be adjusted)
-            f"&onlyDirectRoutes=true"  # Use only direct routes for speed
-            f"&excludeDexes=Whirlpool,Raydium%20CLMM"  # Exclude slower DEXes
+            f"&slippageBps=3000"  # Increased to 30% for highly volatile new tokens
+            f"&onlyDirectRoutes=false"  # Allow more routes for better execution
+            f"&maxAccounts=64"  # Increase account limit for complex routes
+            f"&platformFeeBps=0"  # No platform fees for speed
         )
         
-        quote_response = requests.get(quote_url, timeout=5).json()
+        quote_response = requests.get(quote_url, timeout=10).json()
         
         if 'error' in quote_response:
             cprint(f"🚨 Kali Speed Engine: Quote error for {token_to_buy[-6:]}: {quote_response.get('error')}", 'red')
             return None
+            
+        # Validate quote response
+        if not quote_response.get('outAmount'):
+            cprint(f"🚨 Kali Speed Engine: Invalid quote response - no output amount", 'red')
+            return None
 
-        # 2. Get the swap transaction with high priority
+        # 2. Get the swap transaction with enhanced parameters
         swap_url = 'https://quote-api.jup.ag/v6/swap'
         swap_payload = {
             "quoteResponse": quote_response,
             "userPublicKey": str(keypair.pubkey()),
             "wrapAndUnwrapSol": True,
-            # CRITICAL: High priority fee for fastest inclusion
-            "prioritizationFeeLamports": 50000,  # Higher than normal for speed
+            # ENHANCED: Higher priority fee and compute optimization
+            "prioritizationFeeLamports": 100000,  # Doubled for better execution
             "dynamicComputeUnitLimit": True,  # Optimize compute units
-            "skipUserAccountsRpcCalls": True  # Skip unnecessary RPC calls for speed
+            "skipUserAccountsRpcCalls": False,  # Enable for account validation
+            # FIX: Disable shared accounts to avoid "Simple AMMs not supported" error
+            "restrictIntermediateTokens": False,  # Allow more routing options
+            "useSharedAccounts": False,  # Changed to False to fix AMM error
+            "asLegacyTransaction": False,  # Use versioned transactions
         }
         
-        swap_response = requests.post(swap_url, json=swap_payload, timeout=5).json()
+        swap_response = requests.post(swap_url, json=swap_payload, timeout=10).json()
         
         if 'swapTransaction' not in swap_response:
-            cprint(f"🚨 Kali Speed Engine: Swap error for {token_to_buy[-6:]}: {swap_response.get('error', 'No swap transaction')}", 'red')
+            error_msg = swap_response.get('error', 'No swap transaction')
+            cprint(f"🚨 Kali Speed Engine: Swap error for {token_to_buy[-6:]}: {error_msg}", 'red')
+            
+            # Handle specific error cases
+            if 'slippage' in str(error_msg).lower():
+                cprint(f"💡 Kali Speed Engine: Slippage error detected - token too volatile", 'yellow')
+            elif 'liquidity' in str(error_msg).lower():
+                cprint(f"💡 Kali Speed Engine: Liquidity error detected - insufficient pool depth", 'yellow')
+            elif 'route' in str(error_msg).lower():
+                cprint(f"💡 Kali Speed Engine: Routing error detected - no valid path found", 'yellow')
+                
             return None
 
-        # 3. Deserialize, sign, and send with MAXIMUM SPEED settings
+        # 3. Deserialize, sign, and send with ENHANCED ERROR HANDLING
         swap_tx_b64 = swap_response['swapTransaction']
-        raw_tx = base64.b64decode(swap_tx_b64)
-        versioned_tx = VersionedTransaction.from_bytes(raw_tx)
+        
+        cprint(f"🔍 DEBUG: Transaction string type: {type(swap_tx_b64)}", 'yellow')
+        cprint(f"🔍 DEBUG: Transaction length: {len(swap_tx_b64)}", 'yellow')
+        cprint(f"🔍 DEBUG: First 50 chars: {swap_tx_b64[:50]}", 'yellow')
+        
+        # Clean the base64 string (remove any commas or invalid characters)
+        swap_tx_b64_clean = swap_tx_b64.replace(',', '').replace(' ', '').strip()
+        
+        try:
+            cprint(f"🔍 DEBUG: Attempting base64 decode...", 'yellow')
+            raw_tx = base64.b64decode(swap_tx_b64_clean)
+            cprint(f"🔍 DEBUG: Base64 decode successful, raw_tx length: {len(raw_tx)}", 'green')
+            
+            cprint(f"🔍 DEBUG: Attempting VersionedTransaction.from_bytes...", 'yellow')
+            versioned_tx = VersionedTransaction.from_bytes(raw_tx)
+            cprint(f"🔍 DEBUG: VersionedTransaction created successfully", 'green')
+            
+        except Exception as decode_error:
+            cprint(f"🚨 Kali Speed Engine: Transaction decode error for {token_to_buy[-6:]}: {decode_error}", 'red')
+            cprint(f"   Error type: {type(decode_error).__name__}", 'red')
+            cprint(f"   Raw swap transaction (first 100 chars): {swap_tx_b64[:100]}...", 'yellow')
+            import traceback
+            cprint(f"   Full traceback: {traceback.format_exc()}", 'red')
+            return None
         
         # Sign the transaction with your keypair
         signed_tx = VersionedTransaction(versioned_tx.message, [keypair])
 
-        # CRITICAL: Ultra-fast transmission settings
-        # - skip_preflight=True: No simulation, direct to validator
-        # - processed commitment: Fastest confirmation level
+        # ENHANCED: Better transmission settings to avoid 0x1788 errors
+        # Using confirmed commitment for better success rate vs pure speed
         opts = TxOpts(
-            skip_preflight=True, 
-            preflight_commitment=Commitment("processed"),
-            max_retries=0  # No retries for speed
+            skip_preflight=False,  # Enable preflight for error detection
+            preflight_commitment=Commitment("confirmed"),  # More reliable than processed
+            max_retries=1  # Allow one retry for reliability
         )
         
         cprint(f"🚀 Kali Speed Engine: Transmitting transaction for {token_to_buy[-6:]}", 'yellow', attrs=['bold'])
         
-        # Send transaction with ultra-fast settings
-        tx_receipt = http_client.send_raw_transaction(bytes(signed_tx), opts=opts)
-        tx_signature = tx_receipt.value
-        
-        cprint(f"✅ Kali Speed Engine: ULTRA-FAST BUY SUCCESS! 🚀", 'white', 'on_green', attrs=['bold'])
-        cprint(f"💎 Token: {token_to_buy[-6:]} | TX: https://solscan.io/tx/{str(tx_signature)}", 'green', attrs=['bold'])
-        
-        return str(tx_signature)
+        try:
+            # Send transaction with enhanced error handling
+            tx_receipt = http_client.send_raw_transaction(bytes(signed_tx), opts=opts)
+            tx_signature = tx_receipt.value
+            
+            cprint(f"✅ Kali Speed Engine: ULTRA-FAST BUY SUCCESS! 🚀", 'white', 'on_green', attrs=['bold'])
+            cprint(f"💎 Token: {token_to_buy[-6:]} | TX: https://solscan.io/tx/{str(tx_signature)}", 'green', attrs=['bold'])
+            
+            return str(tx_signature)
+            
+        except Exception as tx_error:
+            error_str = str(tx_error)
+            cprint(f"🚨 Kali Speed Engine: Transaction failed for {token_to_buy[-6:]}: {error_str}", 'red')
+            
+            # Analyze specific error patterns
+            if "0x1788" in error_str or "6024" in error_str:
+                cprint(f"💡 Kali Speed Engine: Error 0x1788 detected - AMM calculation issue", 'yellow')
+                cprint(f"   → Possible causes: Insufficient liquidity, invalid route, or account issues", 'yellow')
+            elif "0x1789" in error_str or "6025" in error_str:
+                cprint(f"💡 Kali Speed Engine: Error 0x1789 detected - Slippage tolerance exceeded", 'yellow')
+                cprint(f"   → Try increasing slippage tolerance in config", 'yellow')
+            elif "0x1771" in error_str:
+                cprint(f"💡 Kali Speed Engine: Error 0x1771 detected - Output amount below minimum", 'yellow')
+            elif "insufficient" in error_str.lower():
+                cprint(f"💡 Kali Speed Engine: Insufficient funds detected", 'yellow')
+            elif "blockhash" in error_str.lower():
+                cprint(f"💡 Kali Speed Engine: Blockhash expired - transaction took too long", 'yellow')
+            
+            return None
 
     except requests.exceptions.Timeout:
         cprint(f"⏰ Kali Speed Engine: Request timeout for {token_to_buy[-6:]}", 'red')
