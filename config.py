@@ -40,7 +40,7 @@ USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 MY_SOLANA_ADDERESS =  "B5MYmAaSAyiJ7dLNfyhHNMTyp3oGye6cYPe8h6taU6qp" # PUT YOUR ADDRESS HERE
 USDC_SIZE = 5
-MAX_POSITIONS = 10
+MAX_POSITIONS = 2
 SELL_AT_MULTIPLE = 1.5 # Exit at 50% profit (1.5x the investment) 
 STOP_LOSS_PERCENTAGE = -.6 # -.7 = down 70%, set to -.99 to essentialy disable
 SELL_AMOUNT_PERCENTAGE = 0.7 # Sell 70% of position when taking profits, keep 30% for bigger gains 
@@ -64,8 +64,8 @@ INTELLIGENCE_LOG_REJECTIONS = True  # Log all rejected tokens for analysis
 ############### DYNAMIC STRATEGY ENGINE CONFIGURATIONS ###############
 # Dynamic Position Sizing - buys relative to liquidity instead of fixed amounts
 USDC_BUY_TARGET_PERCENT_OF_LP = 0.005  # Target buying 0.5% of the initial liquidity
-USDC_MAX_BUY_SIZE = 10  # The absolute maximum USDC to spend on a single trade ($10)
-USDC_MIN_BUY_SIZE = 4   # The absolute minimum USDC to spend on a single trade ($4)
+USDC_MAX_BUY_SIZE = 3  # The absolute maximum USDC to spend on a single trade ($10)
+USDC_MIN_BUY_SIZE = 1   # The absolute minimum USDC to spend on a single trade ($4)
 
 # Advanced Tiered Profit Taking Strategy
 STOP_LOSS_PERCENTAGE = -0.25  # TIGHTENED: -25% stop loss (was -60%)

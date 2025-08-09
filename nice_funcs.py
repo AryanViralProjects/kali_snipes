@@ -371,17 +371,11 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
                 cprint("   🚨 VETTING FAILED: Could not verify token age (strict mode)", 'red')
                 return False
         else:
-            # Balanced approach: Check liquidity to determine if it's genuinely new
-            if liquidity > 100000 or market_cap > 100000:  # $100K+ suggests established token
-                cprint(f"   🚨 VETTING FAILED: No age data + high metrics = likely old (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
-                return False
-            elif liquidity < 50000:  # Low liquidity suggests genuinely new token
-                cprint(f"   ⚠️ WARNING: No age data but low liquidity (${liquidity:,.0f}) - likely new token, proceeding", 'yellow')
-                # Allow genuinely new tokens with low liquidity to proceed
-            else:
-                # Mid-range liquidity without age data is suspicious
-                cprint(f"   🚨 VETTING FAILED: No age data with moderate liquidity (${liquidity:,.0f}) - too risky", 'red')
-                return False
+            # STRICT MODE: Reject ALL tokens without age data
+            # Old tokens often have missing creation time data
+            cprint(f"   🚨 VETTING FAILED: No token age data available - rejecting for safety", 'red')
+            cprint(f"   Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f}", 'red')
+            return False
     except Exception as age_error:
         cprint(f"   🚨 VETTING FAILED: Error checking token age: {age_error} (strict mode)", 'red')
         return False  # Changed from proceeding to failing for safety
