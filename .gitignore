@@ -1,6 +1,7 @@
 # Exclude specific bot folders
 twitter_sniper_bot/
 Sarsa_sniper/
+Kali_sniper_agent/
 
 # Python
 __pycache__/

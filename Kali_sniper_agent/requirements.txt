@@ -1,8 +1,0 @@
-aio-pika==9.4.0
-websockets
-asyncio
-requests
-solders
-termcolor
-pandas
-ccxt
