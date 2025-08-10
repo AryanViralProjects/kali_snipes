@@ -1,3 +1,7 @@
+RAYDIUM_LP_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+HELIUS_WSS_URL = "wss://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY"
+MAX_POSITIONS = 1
+
 ### FILE DIRECTORIES ####
 CLOSED_POSITIONS_TXT = './data/closed_positions.txt'
 FILTERED_PRICECHANGE_URLS_CSV = './data/filtered_pricechange_with_urls.csv'
@@ -33,13 +37,13 @@ SCAN_MINUTE_MARKS = [0, 15, 30, 45]
 ############### main.py configurations ###############
 
 EXIT_ALL_POSITIONS = False # when this is set to true, we are exiting all positions in FULL
-DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr', '7jjxmbPSUBVj87Zx9VMb7smNB7YsyxMDFbCDoTECRgAF']
+DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr'] 
 # to never open a position on tokens like USDC since thats the base, and tokens that may be frozen or broken, place above
 # can also put in closed_position.txt but if the bot gets into a frozen token, closed_positions wont work and youll need to put above
 USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 MY_SOLANA_ADDERESS =  "B5MYmAaSAyiJ7dLNfyhHNMTyp3oGye6cYPe8h6taU6qp" # PUT YOUR ADDRESS HERE
-USDC_SIZE = 3
+USDC_SIZE = 5
 MAX_POSITIONS = 2
 SELL_AT_MULTIPLE = 1.5 # Exit at 50% profit (1.5x the investment) 
 STOP_LOSS_PERCENTAGE = -.6 # -.7 = down 70%, set to -.99 to essentialy disable
@@ -48,9 +52,6 @@ orders_per_open = 1
 
 SLIPPAGE = 499  # 5000 is 50%, 500 is 5% and 50 is .5%
 PRIORITY_FEE = 20000 # 200000 is about .035 usd at 150 sol, after a bit of testing 100000 is sufficient and is .02 usd
-SELL_SLIPPAGE_BPS = 3000  # 30% max slippage for exit swaps (tracker)
-DUST_USD_THRESHOLD = 0.25  # Do not attempt sells when position value <= this
-DYNAMIC_SLIPPAGE_STEPS_BPS = [100, 200, 300, 400, 500]  # 1% -> 5%
 
 ############### SPEED ENGINE CONFIGURATIONS ###############
 SPEED_ENGINE_PRIORITY_FEE = 50000  # Higher priority fee for ultra-fast execution
@@ -65,10 +66,10 @@ AUTO_BLACKLIST_BAD_PERFORMERS = True  # Auto-blacklist tokens that fail after pu
 INTELLIGENCE_LOG_REJECTIONS = True  # Log all rejected tokens for analysis
 
 ############### DYNAMIC STRATEGY ENGINE CONFIGURATIONS ###############
-# Dynamic Position Sizing - DISABLED: Using fixed $3 trades instead
-# USDC_BUY_TARGET_PERCENT_OF_LP = 0.005  # Target buying 0.5% of the initial liquidity
-# USDC_MAX_BUY_SIZE = 3  # The absolute maximum USDC to spend on a single trade
-# USDC_MIN_BUY_SIZE = 1   # The absolute minimum USDC to spend on a single trade
+# Dynamic Position Sizing - buys relative to liquidity instead of fixed amounts
+USDC_BUY_TARGET_PERCENT_OF_LP = 0.005  # Target buying 0.5% of the initial liquidity
+USDC_MAX_BUY_SIZE = 10  # The absolute maximum USDC to spend on a single trade ($10)
+USDC_MIN_BUY_SIZE = 4   # The absolute minimum USDC to spend on a single trade ($4)
 
 # Advanced Tiered Profit Taking Strategy
 STOP_LOSS_PERCENTAGE = -0.25  # TIGHTENED: -25% stop loss (was -60%)
@@ -77,34 +78,20 @@ SELL_AT_MULTIPLE = 1.5  # This becomes our FIRST profit target (50% profit)
 # Multi-Tier Profit Taking System
 # Each tier sells a portion of REMAINING position at increasing profit levels
 SELL_TIERS = [
-    # Tier 1: At 50% profit (1.5x), sell 70% of current holdings
-    {'profit_multiple': 1.5, 'sell_portion': 0.7, 'name': 'Take Profit'},
-
-    # Tier 2: At 100% profit (2x), sell 50% of current holdings
+    # Tier 1: At 100% profit (2x), sell 50% of current holdings
     {'profit_multiple': 2.0, 'sell_portion': 0.5, 'name': 'First Major Profit'},
     
-    # Tier 3: At 400% profit (5x), sell 50% of remaining holdings  
+    # Tier 2: At 400% profit (5x), sell 50% of remaining holdings  
     {'profit_multiple': 5.0, 'sell_portion': 0.5, 'name': 'Moon Shot'},
     
-    # Tier 4: At 1000% profit (11x), sell 75% of remaining holdings
+    # Tier 3: At 1000% profit (11x), sell 75% of remaining holdings
     {'profit_multiple': 11.0, 'sell_portion': 0.75, 'name': 'Generational Wealth'}
 ]
 
 # Position State Tracking
 OPEN_POSITIONS_STATE_FILE = './data/open_positions_state.json'
-ENABLE_DYNAMIC_SIZING = False  # Disable dynamic position sizing - use fixed $3 trades
+ENABLE_DYNAMIC_SIZING = True  # Enable dynamic position sizing
 ENABLE_TIERED_EXITS = True    # Enable tiered profit taking system
-
-# Position tracker ownership of exits
-# When True, the external position tracker (position_tracker_v2.py) is responsible
-# for all take-profit and stop-loss sells. The sniper bot will only buy.
-POSITION_TRACKER_MANAGES_EXITS = True
-ENABLE_POSITION_TRACKER = False  # Do NOT auto-start; run tracker as its own script
-
-# Testing helper: if > 0, position tracker will force an exit
-# for any tracked position whose age exceeds this threshold (seconds).
-# Keep 0 in production and override via env var PTV2_FORCE_EXIT_SECONDS in tests.
-TEST_FORCE_EXIT_SECONDS = 0
 
 
 

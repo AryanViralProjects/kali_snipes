@@ -111,7 +111,7 @@ python main.py
 📊 Intelligence: Fetching security data...
    ✅ Token2022: Pass
    ✅ Mutable Metadata: Pass  
-   ✅ Freeze Authority: Pass
+   ✅ Freeze Authodonerity: Pass
    ✅ Top 10 Holders: 45% (Pass)
    ✅ Liquidity: $15,000 (Pass)
    ✅ Deployer: Clean history (Pass)

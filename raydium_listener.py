@@ -199,16 +199,14 @@ async def trigger_fast_snipe(token_address, signature):
             if liquidity is None or not isinstance(liquidity, (int, float)):
                 liquidity = 0
         
+        # === FIXED SIZE STRATEGY: Always use $3 trades ===
+        fixed_size = USDC_SIZE  # Always $3 as configured
+        usdc_amount_lamports = int(fixed_size * 1000000)  # Convert to lamports
+        
+        cprint(f"💰 Kali Speed Strategy: Fixed sizing applied", 'white', 'on_cyan', attrs=['bold'])
+        cprint(f"   Fixed trade size: ${fixed_size:.2f} USDC", 'cyan')
         if liquidity > 0:
-            dynamic_size = n.calculate_dynamic_position_size(token_address, liquidity)
-            usdc_amount_lamports = int(dynamic_size * 1000000)  # Convert to lamports
-            
-            cprint(f"⚡ Kali Speed Strategy: Dynamic sizing applied", 'white', 'on_cyan', attrs=['bold'])
-            cprint(f"   Liquidity: ${liquidity:,.0f} → Size: ${dynamic_size:.2f} USDC", 'cyan')
-        else:
-            cprint(f"⚠️ Kali Speed Strategy: No liquidity data, using fallback size", 'yellow')
-            dynamic_size = USDC_SIZE
-            usdc_amount_lamports = int(USDC_SIZE * 1000000)  # Fallback to fixed size
+            cprint(f"   Token liquidity: ${liquidity:,.0f}", 'cyan')
         
         # Import required modules for fast execution
         from solders.keypair import Keypair
@@ -222,13 +220,13 @@ async def trigger_fast_snipe(token_address, signature):
         success = n.market_buy_fast(token_address, usdc_amount_lamports, keypair, http_client)
         
         if success:
-            cprint(f"✅ Kali Speed + Strategy Engine: DYNAMIC FAST SNIPE SUCCESSFUL! 🚀", 'white', 'on_green', attrs=['bold'])
-            cprint(f"💎 Token: {token_address[-6:]} | Size: ${dynamic_size:.2f} | TX: {success[:8]}...", 'green', attrs=['bold'])
+            cprint(f"✅ Kali Speed + Strategy Engine: FIXED FAST SNIPE SUCCESSFUL! 🚀", 'white', 'on_green', attrs=['bold'])
+            cprint(f"💎 Token: {token_address[-6:]} | Size: ${fixed_size:.2f} | TX: {success[:8]}...", 'green', attrs=['bold'])
             
-            # === DYNAMIC STRATEGY: RECORD POSITION FOR TIERED MANAGEMENT ===
+            # === STRATEGY: RECORD POSITION FOR TIERED MANAGEMENT ===
             cprint(f"📝 DEBUG: Calling record_new_position for {token_address[-6:]}", 'yellow')
             try:
-                n.record_new_position(token_address, dynamic_size, liquidity)
+                n.record_new_position(token_address, fixed_size, liquidity)
                 cprint(f"✅ DEBUG: Position recording completed for {token_address[-6:]}", 'green')
             except Exception as record_error:
                 cprint(f"❌ DEBUG: Failed to record position: {record_error}", 'red')
@@ -237,10 +235,10 @@ async def trigger_fast_snipe(token_address, signature):
             with open(CLOSED_POSITIONS_TXT, 'a') as f:
                 f.write(f'{token_address}\n')
                 
-            # Log the successful snipe with dynamic size info
+            # Log the successful snipe with fixed size info
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open('./data/speed_engine_snipes.txt', 'a') as f:
-                f.write(f'{timestamp},{token_address},{signature},SUCCESS,${dynamic_size:.2f},${liquidity:.0f}\n')
+                f.write(f'{timestamp},{token_address},{signature},SUCCESS,${fixed_size:.2f},${liquidity:.0f}\n')
         else:
             cprint(f"❌ Kali Speed Engine: Fast snipe failed for {token_address[-6:]}", 'red')
             

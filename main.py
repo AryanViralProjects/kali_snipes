@@ -6,12 +6,15 @@ import math, os
 import requests
 import pandas as pd
 import time 
+import threading
+import asyncio
 import dontshare as d   
 import json
 import nice_funcs as n
 import schedule
 from datetime import datetime 
 from get_new_tokens import scan_bot  # Import scan_bot instead of ohlcv_filter
+from position_tracker_v2 import EnhancedPositionTracker
 
 
 
@@ -71,8 +74,11 @@ def bot():
 
     # === ADVANCED PNL MANAGEMENT ===
     if ENABLE_TIERED_EXITS:
-        cprint('🎯 Kali Strategy Engine: Running Advanced Tiered PNL Management', 'white', 'on_blue', attrs=['bold'])
-        n.advanced_pnl_management()
+        if POSITION_TRACKER_MANAGES_EXITS:
+            cprint('🔒 Exits managed by Position Tracker. Skipping internal sells.', 'cyan')
+        else:
+            cprint('🎯 Kali Strategy Engine: Running Advanced Tiered PNL Management', 'white', 'on_blue', attrs=['bold'])
+            n.advanced_pnl_management()
     else:
         cprint('📈 Kali: Using Legacy PNL Management', 'white', 'on_cyan')
         # Legacy PNL management (simplified version)
@@ -105,6 +111,17 @@ def bot():
 
 
 ####### 🎯 STRATEGY ENGINE ACTIVE
+
+    # Start position tracker thread if enabled (manages exits)
+    if ENABLE_POSITION_TRACKER and POSITION_TRACKER_MANAGES_EXITS:
+        def _run_tracker():
+            tracker = EnhancedPositionTracker()
+            asyncio.run(tracker.run())
+        # Start only once per process
+        if not any(getattr(t, 'name', '').startswith('PositionTrackerThread') for t in threading.enumerate()):
+            tracker_thread = threading.Thread(target=_run_tracker, daemon=True, name='PositionTrackerThread')
+            tracker_thread.start()
+            cprint('✅ Position tracker thread started', 'green')
 
     # Run token scan every time
     cprint(f'🔍 Kali: Running token scan...', 'white', 'on_cyan')

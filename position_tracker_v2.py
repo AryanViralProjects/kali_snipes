@@ -218,6 +218,22 @@ class EnhancedPositionTracker:
                 
                 # Check exit conditions
                 stop_loss_value = initial * (1 + STOP_LOSS_PERCENTAGE)
+
+                # Dust guard: if value is zero or under threshold, stop tracking and blacklist from future trades
+                if current_value <= DUST_USD_THRESHOLD:
+                    cprint(f"   🧹 Value ${current_value:.2f} <= dust threshold ${DUST_USD_THRESHOLD:.2f}. Skipping sells and removing from tracking.", 'white', 'on_magenta')
+                    try:
+                        # Add to closed positions and do-not-trade
+                        with open(CLOSED_POSITIONS_TXT, 'a') as f:
+                            f.write(f"{token_address}\n")
+                        if token_address not in DO_NOT_TRADE_LIST:
+                            cprint("   Adding to DO_NOT_TRADE_LIST requires config edit; writing to closed positions is sufficient to skip.", 'yellow')
+                    except Exception:
+                        pass
+                    positions_to_remove.append(token_address)
+                    continue
+
+                # Test force-exit feature removed for production stability
                 
                 # Stop-loss check
                 if current_value < stop_loss_value and current_value > 0:
@@ -282,6 +298,7 @@ class EnhancedPositionTracker:
         tier_list = ', '.join([f"{t['profit_multiple']}x" for t in SELL_TIERS])
         print(f"   Profit Tiers: {tier_list}")
         print(f"   Check Interval: {self.check_interval}s")
+        # Test force-exit display removed
         print(f"   Tracking: {len(self.positions)} position(s)")
         
         print("\n✅ Tracker started. Monitoring snipes and positions...")

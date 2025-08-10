@@ -12,6 +12,11 @@ import dontshare as d
 import nice_funcs as n
 from config import *
 from raydium_listener import start_speed_engine
+try:
+    # Optional import; tracker runs as a standalone script in this mode
+    from position_tracker_v2 import EnhancedPositionTracker
+except Exception:
+    EnhancedPositionTracker = None
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -25,9 +30,13 @@ def run_risk_management():
             
             # === ADVANCED STRATEGY ENGINE RISK MANAGEMENT ===
             if ENABLE_TIERED_EXITS:
-                # Use the advanced PNL management system
-                n.advanced_pnl_management()
-                
+                if POSITION_TRACKER_MANAGES_EXITS:
+                    # Exits are managed by the external position tracker
+                    cprint("🔒 Exits managed by Position Tracker. Skipping internal sells.", 'cyan')
+                else:
+                    # Use the advanced PNL management system
+                    n.advanced_pnl_management()
+                    
                 # Show strategy performance summary
                 summary = n.get_position_performance_summary()
                 if "No positions" not in summary:
@@ -37,29 +46,32 @@ def run_risk_management():
                 # Fallback to legacy system
                 cprint("📈 Kali Speed Engine: Using legacy risk management", 'cyan')
                 
-                # Get open positions
-                open_positions_df = n.fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
-                
-                if not open_positions_df.empty:
-                    # Check for winning positions (first profit target)
-                    winning_positions_df = open_positions_df[open_positions_df['USD Value'] > SELL_AT_MULTIPLE * USDC_SIZE]
+                if POSITION_TRACKER_MANAGES_EXITS:
+                    cprint("🔒 Exits managed by Position Tracker. Legacy sells disabled.", 'cyan')
+                else:
+                    # Get open positions
+                    open_positions_df = n.fetch_wallet_holdings_og(MY_SOLANA_ADDERESS)
                     
-                    for index, row in winning_positions_df.iterrows():
-                        token_mint_address = row['Mint Address']
-                        if token_mint_address not in DO_NOT_TRADE_LIST:
-                            cprint(f'💰 Kali Speed Engine: Taking profit on {token_mint_address[-6:]}', 'white', 'on_green')
-                            n.pnl_close(token_mint_address)
-                    
-                    # Check for losing positions (tightened stop loss)
-                    sl_size = ((1+STOP_LOSS_PERCENTAGE) * USDC_SIZE)
-                    losing_positions_df = open_positions_df[open_positions_df['USD Value'] < sl_size]
-                    losing_positions_df = losing_positions_df[losing_positions_df['USD Value'] != 0]
-                    
-                    for index, row in losing_positions_df.iterrows():
-                        token_mint_address = row['Mint Address']
-                        if token_mint_address not in DO_NOT_TRADE_LIST and token_mint_address != USDC_CA:
-                            cprint(f'🛑 Kali Speed Engine: Stop loss triggered for {token_mint_address[-6:]}', 'white', 'on_red')
-                            n.pnl_close(token_mint_address)
+                    if not open_positions_df.empty:
+                        # Check for winning positions (first profit target)
+                        winning_positions_df = open_positions_df[open_positions_df['USD Value'] > SELL_AT_MULTIPLE * USDC_SIZE]
+                        
+                        for index, row in winning_positions_df.iterrows():
+                            token_mint_address = row['Mint Address']
+                            if token_mint_address not in DO_NOT_TRADE_LIST:
+                                cprint(f'💰 Kali Speed Engine: Taking profit on {token_mint_address[-6:]}', 'white', 'on_green')
+                                n.pnl_close(token_mint_address)
+                        
+                        # Check for losing positions (tightened stop loss)
+                        sl_size = ((1+STOP_LOSS_PERCENTAGE) * USDC_SIZE)
+                        losing_positions_df = open_positions_df[open_positions_df['USD Value'] < sl_size]
+                        losing_positions_df = losing_positions_df[losing_positions_df['USD Value'] != 0]
+                        
+                        for index, row in losing_positions_df.iterrows():
+                            token_mint_address = row['Mint Address']
+                            if token_mint_address not in DO_NOT_TRADE_LIST and token_mint_address != USDC_CA:
+                                cprint(f'🛑 Kali Speed Engine: Stop loss triggered for {token_mint_address[-6:]}', 'white', 'on_red')
+                                n.pnl_close(token_mint_address)
             
             # Sleep for 2 minutes before next check
             time.sleep(120)
@@ -138,6 +150,8 @@ def run_speed_engine_main():
     balance_thread = threading.Thread(target=run_balance_monitor, daemon=True)
     balance_thread.start()
     cprint("✅ Balance monitor thread started", 'green')
+
+    # Position tracker is run separately when ENABLE_POSITION_TRACKER=False
     
     cprint("\n🚀 LAUNCHING REAL-TIME DETECTION ENGINE...", 'white', 'on_green', attrs=['bold'])
     cprint("🔍 Monitoring Raydium for new pool creations...", 'white', 'on_green', attrs=['bold'])

@@ -364,21 +364,25 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
                 else:
                     cprint(f"   ✅ Token age check passed: {token_age_hours:.1f}h old", 'green')
             else:
-                # STRICT: If we can't parse creation time, check other indicators
+                # If we can't parse creation time, check other indicators for OLD tokens
                 if liquidity > 1000000 or market_cap > 1000000:  # $1M+ suggests old token
                     cprint(f"   🚨 VETTING FAILED: High liquidity/MC suggests old token (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
                     return False
-                cprint("   🚨 VETTING FAILED: Could not verify token age (strict mode)", 'red')
-                return False
+                else:
+                    # For NEW tokens: No age data is NORMAL - they're too new for Birdeye to have indexed yet
+                    cprint(f"   ✅ Token age check: No age data (likely very new token) - proceeding", 'green')
         else:
-            # STRICT MODE: Reject ALL tokens without age data
-            # Old tokens often have missing creation time data
-            cprint(f"   🚨 VETTING FAILED: No token age data available - rejecting for safety", 'red')
-            cprint(f"   Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f}", 'red')
-            return False
+            # NEW LOGIC: For Speed Engine detections, NO age data often means VERY NEW token
+            # Check if this is a reasonable new token based on liquidity/MC
+            if liquidity > 1000000 or market_cap > 1000000:  # $1M+ suggests old token
+                cprint(f"   🚨 VETTING FAILED: High liquidity/MC without age data suggests old token (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
+                return False
+            else:
+                # Low liquidity + no age data = likely VERY NEW token from Speed Engine
+                cprint(f"   ✅ Token age check: No age data but low liquidity/MC - likely fresh token", 'green')
+                cprint(f"   Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f} (proceeding)", 'cyan')
     except Exception as age_error:
-        cprint(f"   🚨 VETTING FAILED: Error checking token age: {age_error} (strict mode)", 'red')
-        return False  # Changed from proceeding to failing for safety
+        cprint(f"   ⚠️ Token age check error: {age_error} (proceeding anyway for new tokens)", 'yellow')
 
     # === Deployer History Check ===
     deployer = get_deployer_address(token_address, birdeye_api_key)
@@ -625,7 +629,7 @@ def get_position_performance_summary():
         return f"Error getting summary: {e}"
 
 
-def calculate_dynamic_position_size(token_address, liquidity):
+#def calculate_dynamic_position_size(token_address, liquidity):
     """
     🎯 KALI STRATEGY ENGINE: Calculate optimal position size based on liquidity.
     Returns the USDC amount to spend based on dynamic sizing rules.
@@ -1074,11 +1078,8 @@ def get_names_nosave(df):
         
     # Update USD Value column with calculated values
     df['USD Value'] = usd_values
-
-    # Drop unnecessary columns for display
-    df_display = df.drop(['Mint Address', 'Amount'], axis=1)
     
-    return df_display
+    return df
 
 def get_names(df):
     names = []  # List to hold the collected names
@@ -1162,29 +1163,31 @@ def fetch_wallet_holdings_og(address):
     except Exception as e:
         cprint(f"❌ Kali: Error fetching wallet holdings: {str(e)}", 'white', 'on_red')
 
-    # Addresses to exclude from the "do not trade list"
-    exclude_addresses = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'So11111111111111111111111111111111111111112']
+    # Addresses to exclude from the portfolio display
+    exclude_from_portfolio = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'So11111111111111111111111111111111111111112']
 
-    # Update the "do not trade list" by removing the excluded addresses
-    updated_dont_trade_list = [mint for mint in DO_NOT_TRADE_LIST if mint not in exclude_addresses]
+    # Filter out SOL and USDC from the dataframe
+    if not df.empty:
+        df = df[~df['Mint Address'].isin(exclude_from_portfolio)]
 
-    # Filter the dataframe
-    for mint in updated_dont_trade_list:
-        df = df[df['Mint Address'] != mint]
+    # Filter the dataframe based on the DO_NOT_TRADE_LIST
+    if not df.empty:
+        df = df[~df['Mint Address'].isin(DO_NOT_TRADE_LIST)]
 
     # Print the DataFrame if it's not empty
     if not df.empty:
-        df2 = get_names_nosave(df.copy())
+        df_with_values = get_names_nosave(df.copy())
         print('')
-        print(df2.head(20))
-        cprint(f'💰 Kali: Current Portfolio Value: ${round(df2["USD Value"].sum(),2)}', 'white', 'on_green')
+        df_display = df_with_values.drop(['Mint Address', 'Amount'], axis=1)
+        print(df_display.head(20))
+        cprint(f'💰 Kali: Current Portfolio Value: ${round(df_with_values["USD Value"].sum(),2)}', 'white', 'on_green')
         print(' ')
         time.sleep(7)
+        return df_with_values
     else:
         cprint("❌ Kali: No wallet holdings to display.", 'white', 'on_red')
         time.sleep(30)
-
-    return df
+        return df
 
 def fetch_wallet_token_single(address, token_mint_address):
     
@@ -1199,42 +1202,26 @@ def fetch_wallet_token_single(address, token_mint_address):
 def get_position(token_mint_address):
     """
     Fetches the balance of a specific token given its mint address from a DataFrame.
-
-    Parameters:
-    - dataframe: A pandas DataFrame containing token balances with columns ['Mint Address', 'Amount'].
-    - token_mint_address: The mint address of the token to find the balance for.
-
-    Returns:
-    - The balance of the specified token if found, otherwise a message indicating the token is not in the wallet.
+    Retries a few times if the token is not found immediately.
     """
-    dataframe = fetch_wallet_token_single(MY_SOLANA_ADDERESS, token_mint_address)
+    max_retries = 5
+    retry_delay = 5  # seconds
+    for attempt in range(max_retries):
+        dataframe = fetch_wallet_token_single(MY_SOLANA_ADDERESS, token_mint_address)
 
-    #dataframe = pd.read_csv('data/token_per_addy.csv')
+        if not dataframe.empty:
+            # Ensure 'Mint Address' column is treated as string for reliable comparison
+            dataframe['Mint Address'] = dataframe['Mint Address'].astype(str)
+            if dataframe['Mint Address'].isin([token_mint_address]).any():
+                balance = dataframe.loc[dataframe['Mint Address'] == token_mint_address, 'Amount'].iloc[0]
+                return balance
 
-    print('-----------------')
-    #print(dataframe)
-
-    #print(dataframe)
-
-    # Check if the DataFrame is empty
-    if dataframe.empty:
-        print("The DataFrame is empty. No positions to show.")
-        time.sleep(5)
-        return 0  # Indicating no balance found
-
-    # Ensure 'Mint Address' column is treated as string for reliable comparison
-    dataframe['Mint Address'] = dataframe['Mint Address'].astype(str)
-
-    # Check if the token mint address exists in the DataFrame
-    if dataframe['Mint Address'].isin([token_mint_address]).any():
-        # Get the balance for the specified token
-        balance = dataframe.loc[dataframe['Mint Address'] == token_mint_address, 'Amount'].iloc[0]
-        #print(f"Balance for {token_mint_address[-4:]} token: {balance}")
-        return balance
-    else:
-        # If the token mint address is not found in the DataFrame, return a message indicating so
-        print("Token mint address not found in the wallet.")
-        return 0  # Indicating no balance found
+        if attempt < max_retries - 1:
+            cprint(f"Token {token_mint_address[-6:]} not found, retrying in {retry_delay}s...", 'yellow')
+            time.sleep(retry_delay)
+        else:
+            cprint(f"Token {token_mint_address[-6:]} not found after {max_retries} attempts.", 'red')
+            return 0
 
 
 
@@ -1309,20 +1296,23 @@ def market_buy(token, amount, slippage=SLIPPAGE):
 
     import dontshare as d 
 
-    KEY = Keypair.from_base58_string(d.sol_key)
+    # Support both base58 strings and comma-separated byte arrays
+    KEY = create_keypair_from_key(d.sol_key)
     QUOTE_TOKEN = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
 
     http_client = Client(d.rpc_url)
 
-    quote_url = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}&slippageBps={SLIPPAGE}&restrictIntermediateTokens=true'
+    base_quote = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}'
     swap_url = 'https://quote-api.jup.ag/v6/swap'
     
     # Initialize counter for swap transaction errors
     swap_error_count = 0
     max_retries = 50
     
-    while True:
+    # Dynamic slippage attempts: 1% -> 5%
+    for attempt_slippage in DYNAMIC_SLIPPAGE_STEPS_BPS:
         try:
+            quote_url = f"{base_quote}&slippageBps={attempt_slippage}&restrictIntermediateTokens=true"
             quote = requests.get(quote_url).json()
 
             txRes = requests.post(swap_url,
@@ -1334,20 +1324,8 @@ def market_buy(token, amount, slippage=SLIPPAGE):
                                   })).json()
                                   
             if 'swapTransaction' not in txRes:
-                swap_error_count += 1
-                cprint(f'🚨 Kali: SwapTransaction error #{swap_error_count}/50 for token {token[-4:]}', 'white', 'on_red')
-                
-                if swap_error_count >= max_retries:
-                    cprint(f'💀 Kali: Blacklisting token {token[-4:]} after {max_retries} swap transaction errors!', 'white', 'on_red')
-                    # Add to permanent blacklist
-                    with open(PERMANENT_BLACKLIST, 'a') as f:
-                        f.write(f'{token}\n')
-                    # Add to closed positions to prevent future attempts
-                    with open(CLOSED_POSITIONS_TXT, 'a') as f:
-                        f.write(f'{token}\n')
-                    return False
-                    
-                time.sleep(2)  # Wait before retry
+                cprint(f"⚠️ Kali: No swapTransaction at slippage {attempt_slippage}bps, trying higher...", 'yellow')
+                time.sleep(1)
                 continue
                 
             swapTx = base64.b64decode(txRes['swapTransaction'])
@@ -1363,6 +1341,13 @@ def market_buy(token, amount, slippage=SLIPPAGE):
         except Exception as e:
             cprint(f"⚠️ Kali: An error occurred: {e}", 'white', 'on_red')
             time.sleep(5)
+    # If we reach here, all slippage attempts failed
+    cprint(f"💀 Kali: All dynamic slippage attempts failed for {token[-4:]}", 'white', 'on_red')
+    with open(PERMANENT_BLACKLIST, 'a') as f:
+        f.write(f'{token}\n')
+    with open(CLOSED_POSITIONS_TXT, 'a') as f:
+        f.write(f'{token}\n')
+    return False
 
 
 def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client):
@@ -1554,7 +1539,7 @@ def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client)
         return None
 
 
-def market_sell(QUOTE_TOKEN, amount, slippage=SLIPPAGE):
+def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
 
     import requests
     import json
@@ -1565,7 +1550,136 @@ def market_sell(QUOTE_TOKEN, amount, slippage=SLIPPAGE):
     from solana.rpc.types import TxOpts
     import dontshare as d 
 
-    KEY = Keypair.from_base58_string(d.sol_key)
+    # Support both base58 strings and comma-separated byte arrays
+    KEY = create_keypair_from_key(d.sol_key)
+    token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
+
+    http_client = Client(d.rpc_url)
+    base_quote = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}'
+    swap_url = 'https://quote-api.jup.ag/v6/swap'
+    
+    # Initialize counter for swap transaction errors
+    swap_error_count = 0
+    max_retries = 50
+    
+    # Dynamic slippage attempts: 1% -> 5%
+    for attempt_slippage in DYNAMIC_SLIPPAGE_STEPS_BPS:
+        try:
+            quote_url = f"{base_quote}&slippageBps={attempt_slippage}&restrictIntermediateTokens=true"
+            quote = requests.get(quote_url).json()
+
+            txRes = requests.post(swap_url,
+                                  headers={"Content-Type": "application/json"},
+                                  data=json.dumps({
+                                      "quoteResponse": quote,
+                                      "userPublicKey": str(KEY.pubkey()),
+                                      "prioritizationFeeLamports": PRIORITY_FEE  # Hardcoded fee
+                                  })).json()
+                                  
+            if 'swapTransaction' not in txRes:
+                cprint(f"⚠️ Kali: No swapTransaction at slippage {attempt_slippage}bps, trying higher...", 'yellow')
+                time.sleep(1)
+                continue
+                
+            swapTx = base64.b64decode(txRes['swapTransaction'])
+            tx1 = VersionedTransaction.from_bytes(swapTx)
+            tx = VersionedTransaction(tx1.message, [KEY])
+            txId = http_client.send_raw_transaction(bytes(tx), TxOpts(skip_preflight=True)).value
+            cprint(f"🌟 Kali: Transaction successful! https://solscan.io/tx/{str(txId)}", 'white', 'on_green')
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            cprint(f"🔄 Kali: Request failed: {e}", 'white', 'on_red')
+            time.sleep(5)
+        except Exception as e:
+            cprint(f"⚠️ Kali: An error occurred: {e}", 'white', 'on_red')
+            time.sleep(5)
+    # All dynamic slippage attempts failed
+    cprint(f"💀 Kali: All dynamic slippage attempts failed for {QUOTE_TOKEN[-4:]} -> USDC", 'white', 'on_red')
+    with open(PERMANENT_BLACKLIST, 'a') as f:
+        f.write(f'{QUOTE_TOKEN}\n')
+    with open(CLOSED_POSITIONS_TXT, 'a') as f:
+        f.write(f'{QUOTE_TOKEN}\n')
+    return False
+
+
+def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
+
+    import requests
+    import json
+    import base64
+    from solders.keypair import Keypair
+    from solders.transaction import VersionedTransaction
+    from solana.rpc.api import Client
+    from solana.rpc.types import TxOpts
+    import dontshare as d 
+
+    # Support both base58 strings and comma-separated byte arrays
+    KEY = create_keypair_from_key(d.sol_key)
+    token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
+
+    http_client = Client(d.rpc_url)
+    base_quote = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}'
+    swap_url = 'https://quote-api.jup.ag/v6/swap'
+    
+    # Initialize counter for swap transaction errors
+    swap_error_count = 0
+    max_retries = 50
+    
+    # Dynamic slippage attempts: 1% -> 5%
+    for attempt_slippage in DYNAMIC_SLIPPAGE_STEPS_BPS:
+        try:
+            quote_url = f"{base_quote}&slippageBps={attempt_slippage}&restrictIntermediateTokens=true"
+            quote = requests.get(quote_url).json()
+
+            txRes = requests.post(swap_url,
+                                  headers={"Content-Type": "application/json"},
+                                  data=json.dumps({
+                                      "quoteResponse": quote,
+                                      "userPublicKey": str(KEY.pubkey()),
+                                      "prioritizationFeeLamports": PRIORITY_FEE  # Hardcoded fee
+                                  })).json()
+                                  
+            if 'swapTransaction' not in txRes:
+                cprint(f"⚠️ Kali: No swapTransaction at slippage {attempt_slippage}bps, trying higher...", 'yellow')
+                time.sleep(1)
+                continue
+                
+            swapTx = base64.b64decode(txRes['swapTransaction'])
+            tx1 = VersionedTransaction.from_bytes(swapTx)
+            tx = VersionedTransaction(tx1.message, [KEY])
+            txId = http_client.send_raw_transaction(bytes(tx), TxOpts(skip_preflight=True)).value
+            cprint(f"🌟 Kali: Transaction successful! https://solscan.io/tx/{str(txId)}", 'white', 'on_green')
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            cprint(f"🔄 Kali: Request failed: {e}", 'white', 'on_red')
+            time.sleep(5)
+        except Exception as e:
+            cprint(f"⚠️ Kali: An error occurred: {e}", 'white', 'on_red')
+            time.sleep(5)
+    # All dynamic slippage attempts failed (variant)
+    cprint(f"💀 Kali: All dynamic slippage attempts failed for {QUOTE_TOKEN[-4:]} -> USDC (variant)", 'white', 'on_red')
+    with open(PERMANENT_BLACKLIST, 'a') as f:
+        f.write(f'{QUOTE_TOKEN}\n')
+    with open(CLOSED_POSITIONS_TXT, 'a') as f:
+        f.write(f'{QUOTE_TOKEN}\n')
+    return False
+
+
+def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
+
+    import requests
+    import json
+    import base64
+    from solders.keypair import Keypair
+    from solders.transaction import VersionedTransaction
+    from solana.rpc.api import Client
+    from solana.rpc.types import TxOpts
+    import dontshare as d 
+
+    # Support both base58 strings and comma-separated byte arrays
+    KEY = create_keypair_from_key(d.sol_key)
     token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
 
     http_client = Client(d.rpc_url)
@@ -1646,9 +1760,8 @@ def kill_switch(token_mint_address):
             cprint(f'just made an order {token_mint_address[-4:]} selling {sell_size} ...', 'white', 'on_blue')
             time.sleep(15)
             
-        except:
-            cprint('order error.. trying again', 'white', 'on_red')
-            # time.sleep(7)
+        except Exception as e:
+            cprint(f'order error.. trying again: {e}', 'white', 'on_red')
 
         balance = get_position(token_mint_address)
         price = ask_bid(token_mint_address)
@@ -1742,9 +1855,8 @@ def pnl_close(token_mint_address):
             cprint(f'just made an order {token_mint_address[-4:]} selling {sell_size} ...', 'white', 'on_green')
             time.sleep(15)
             
-        except:
-            cprint('order error.. trying again', 'white', 'on_red')
-            # time.sleep(7)
+        except Exception as e:
+            cprint(f'order error.. trying again: {e}', 'white', 'on_red')
 
         balance = get_position(token_mint_address)
         price = ask_bid(token_mint_address)
@@ -1859,8 +1971,8 @@ def open_position(token_mint_address):
         cprint(f'⚠️ Kali Strategy: Token {token_mint_address[-6:]} has zero liquidity, skipping', 'white', 'on_red')
         return
 
-    # === DYNAMIC STRATEGY: CALCULATE POSITION SIZE ===
-    dynamic_buy_size = calculate_dynamic_position_size(token_mint_address, liquidity)
+    # === FIXED SIZE STRATEGY: USE CONFIGURED USDC_SIZE ===
+    # Using fixed $3 trades as per user configuration
     
     price = ask_bid(token_mint_address)
     if not price:
@@ -1868,12 +1980,13 @@ def open_position(token_mint_address):
         return
 
     try:
-        # Use dynamic size instead of fixed USDC_SIZE
-        size_needed_lamports = int(dynamic_buy_size * 10**6)  # Convert USDC to lamports
+        # Use fixed USDC_SIZE for all trades
+        fixed_buy_size = USDC_SIZE  # $3 as configured
+        size_needed_lamports = int(fixed_buy_size * 10**6)  # Convert USDC to lamports
         size_needed_str = str(size_needed_lamports)
 
-        cprint(f'🚀 Kali Strategy: Executing dynamic position', 'white', 'on_green', attrs=['bold'])
-        cprint(f'   Size: ${dynamic_buy_size:.2f} USDC ({size_needed_lamports:,} lamports)', 'green')
+        cprint(f'🚀 Kali Strategy: Executing fixed position', 'white', 'on_green', attrs=['bold'])
+        cprint(f'   Size: ${fixed_buy_size:.2f} USDC ({size_needed_lamports:,} lamports)', 'green')
 
         # Try to open position with dynamic sizing
         execution_success = False
@@ -1892,8 +2005,8 @@ def open_position(token_mint_address):
             if current_balance > 0:
                 cprint(f'✅ Kali Strategy: Dynamic position opened! Balance: {current_balance}', 'white', 'on_green', attrs=['bold'])
                 
-                # === DYNAMIC STRATEGY: RECORD POSITION STATE FOR TIERED MANAGEMENT ===
-                record_new_position(token_mint_address, dynamic_buy_size, liquidity)
+                # === STRATEGY: RECORD POSITION STATE FOR TIERED MANAGEMENT ===
+                record_new_position(token_mint_address, fixed_buy_size, liquidity)
                 
                 # Add to closed positions to prevent re-entry
                 with open(CLOSED_POSITIONS_TXT, 'a') as f:
@@ -1922,7 +2035,7 @@ def open_position(token_mint_address):
                     cprint(f'✅ Kali Strategy: Position opened on retry! Balance: {current_balance}', 'white', 'on_green')
                     
                     # Record position state even on retry
-                    record_new_position(token_mint_address, dynamic_buy_size, liquidity)
+                    record_new_position(token_mint_address, fixed_buy_size, liquidity)
                     
                     with open(CLOSED_POSITIONS_TXT, 'a') as f:
                         f.write(f'{token_mint_address}\n')
@@ -1938,7 +2051,7 @@ def open_position(token_mint_address):
     final_balance = get_position(token_mint_address)
     if final_balance > 0:
         cprint(f'✅ Kali Strategy: Final position check - Balance: {final_balance}', 'white', 'on_green')
-        record_new_position(token_mint_address, dynamic_buy_size, liquidity)
+        record_new_position(token_mint_address, fixed_buy_size, liquidity)
         with open(CLOSED_POSITIONS_TXT, 'a') as f:
             f.write(f'{token_mint_address}\n')
     else:

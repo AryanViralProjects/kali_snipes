@@ -1,1 +1,26 @@
-{}
+{
+    "HLRGoPcK1n4fmkowVyBNkVHRoiiCUL2qyneNqTUNpump": {
+        "token_name": "THE RETIREMENT COIN",
+        "initial_investment_usdc": 3.0,
+        "entry_price": 4.3665200260815956e-05,
+        "token_amount": 68704.59730130046,
+        "initial_liquidity": 40104.0,
+        "entry_timestamp": 1754772528.060344,
+        "signature": "2YgG1rVDUAd8kFuRr4LQ4thNmFKVyE3ViPL3F68619scfstbbDARimcq6tKVRMNHpfn13N1rcJ3YBCb3bzjmHcFu",
+        "tiers_sold": [],
+        "total_sold_usdc": 0.0,
+        "strategy_type": "tiered_dynamic"
+    },
+    "AtnCrFmFe9VR2bQTAd5YFbmTSHVG9ZfACribZ5kKJ8N": {
+        "token_name": "ChatGPT5.0",
+        "initial_investment_usdc": 3.0,
+        "entry_price": 1.988237757448451,
+        "token_amount": 1.5088738702206146,
+        "initial_liquidity": 81823.0,
+        "entry_timestamp": 1754772584.895085,
+        "signature": "dgucaS67bydQ84GiTp2ifCabyZ668tCJQ75fxtUQEfaVX52wZncBaxwEXwBdkFS7fLWHT1ngmvehUp6Yg58gMyz",
+        "tiers_sold": [],
+        "total_sold_usdc": 0.0,
+        "strategy_type": "tiered_dynamic"
+    }
+}
