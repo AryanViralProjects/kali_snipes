@@ -14,6 +14,12 @@ import nice_funcs as n
 from config import *
 import dontshare as d
 
+# Telegram alert import
+from telegram_manager import send_telegram_alert
+
+# Telegram alert import
+from telegram_manager import send_telegram_alert
+
 class EnhancedPositionTracker:
     def __init__(self):
         self.positions_file = './data/open_positions_state.json'
@@ -175,7 +181,7 @@ class EnhancedPositionTracker:
         for token_address, position_data in self.positions.items():
             try:
                 # Get current balance
-                balance = n.get_position(token_address)
+                balance = n.get_position_fast(token_address)
                 
                 # Check if position still exists
                 if balance == 0:
@@ -218,22 +224,6 @@ class EnhancedPositionTracker:
                 
                 # Check exit conditions
                 stop_loss_value = initial * (1 + STOP_LOSS_PERCENTAGE)
-
-                # Dust guard: if value is zero or under threshold, stop tracking and blacklist from future trades
-                if current_value <= DUST_USD_THRESHOLD:
-                    cprint(f"   🧹 Value ${current_value:.2f} <= dust threshold ${DUST_USD_THRESHOLD:.2f}. Skipping sells and removing from tracking.", 'white', 'on_magenta')
-                    try:
-                        # Add to closed positions and do-not-trade
-                        with open(CLOSED_POSITIONS_TXT, 'a') as f:
-                            f.write(f"{token_address}\n")
-                        if token_address not in DO_NOT_TRADE_LIST:
-                            cprint("   Adding to DO_NOT_TRADE_LIST requires config edit; writing to closed positions is sufficient to skip.", 'yellow')
-                    except Exception:
-                        pass
-                    positions_to_remove.append(token_address)
-                    continue
-
-                # Test force-exit feature removed for production stability
                 
                 # Stop-loss check
                 if current_value < stop_loss_value and current_value > 0:
@@ -277,13 +267,78 @@ class EnhancedPositionTracker:
     async def execute_exit(self, token_address, exit_type, current_value):
         """Execute exit strategy"""
         try:
+            # Get position data for Telegram alert
+            position_data = self.positions.get(token_address, {})
+            initial_investment = position_data.get('initial_investment_usdc', 0)
+            token_name = position_data.get('token_name', token_address[-6:])
+            
             if exit_type == 'STOP_LOSS':
                 cprint(f"\n💔 Executing STOP-LOSS for {token_address[-6:]}", 'red', attrs=['bold'])
+                
+                # --- ADD THIS BLOCK FOR TELEGRAM ALERT ---
+                try:
+                    loss_usd = current_value - initial_investment
+                    loss_pct = (loss_usd / initial_investment * 100) if initial_investment > 0 else 0
+                    message = (
+                        f"🚨 *KALI STOP-LOSS* 🚨\n\n"
+                        f"*Token:* `{token_name}`\n"
+                        f"*Address:* `{token_address}`\n"
+                        f"*Action:* SELL ALL\n"
+                        f"*Initial:* ${initial_investment:.2f} USD\n"
+                        f"*Current:* ${current_value:.2f} USD\n"
+                        f"*P/L:* `${loss_usd:,.2f} USD ({loss_pct:.1f}%)`\n\n"
+                        f"Executing full exit now."
+                    )
+                    send_telegram_alert(message)
+                except Exception as alert_error:
+                    cprint(f"⚠️ Failed to format or send STOP-LOSS Telegram alert: {alert_error}", 'yellow')
+                # --- END OF TELEGRAM ALERT BLOCK ---
+                
                 n.kill_switch(token_address)
+                # Mark mint as closed to prevent re-entry
+                try:
+                    with open(CLOSED_POSITIONS_TXT, 'a') as f:
+                        f.write(f"{token_address}\n")
+                except Exception:
+                    pass
             elif exit_type.startswith('TIER_'):
                 tier_idx = int(exit_type.split('_')[1])
                 cprint(f"\n💰 Executing TIER {tier_idx + 1} exit for {token_address[-6:]}", 'green', attrs=['bold'])
-                n.execute_tiered_sell(token_address, tier_idx, current_value)
+                
+                # --- ADD THIS BLOCK FOR TELEGRAM ALERT ---
+                try:
+                    profit_usd = current_value - initial_investment
+                    profit_pct = (profit_usd / initial_investment * 100) if initial_investment > 0 else 0
+                    sell_portion = SELL_TIERS[tier_idx].get('sell_portion', 0) * 100
+                    message = (
+                        f"💰 *KALI TAKE PROFIT TIER {tier_idx + 1}* 💰\n\n"
+                        f"*Token:* `{token_name}`\n"
+                        f"*Address:* `{token_address}`\n"
+                        f"*Action:* SELL {sell_portion:.0f}% of position\n"
+                        f"*Current Value:* ${current_value:,.2f} USD\n"
+                        f"*Total P/L:* `${profit_usd:,.2f} USD ({profit_pct:+.1f}%)`\n\n"
+                        f"Executing partial sell now."
+                    )
+                    send_telegram_alert(message)
+                except Exception as alert_error:
+                    cprint(f"⚠️ Failed to format or send TAKE-PROFIT Telegram alert: {alert_error}", 'yellow')
+                # --- END OF TELEGRAM ALERT BLOCK ---
+                
+                # If this tier is configured to sell 100% (or it's the final tier), fully exit
+                sell_portion = SELL_TIERS[tier_idx].get('sell_portion', 0)
+                is_final_tier = (tier_idx == len(SELL_TIERS) - 1)
+                if sell_portion >= 0.9999 or is_final_tier:
+                    n.kill_switch(token_address)
+                    # Record recent exit for cross-process re-entry cooldown
+                    n.append_recent_exit(token_address)
+                    # Mark mint as closed to prevent re-entry
+                    try:
+                        with open(CLOSED_POSITIONS_TXT, 'a') as f:
+                            f.write(f"{token_address}\n")
+                    except Exception:
+                        pass
+                else:
+                    n.execute_tiered_sell(token_address, tier_idx, current_value)
         except Exception as e:
             cprint(f"❌ Exit execution error: {e}", 'red')
     
@@ -298,11 +353,14 @@ class EnhancedPositionTracker:
         tier_list = ', '.join([f"{t['profit_multiple']}x" for t in SELL_TIERS])
         print(f"   Profit Tiers: {tier_list}")
         print(f"   Check Interval: {self.check_interval}s")
-        # Test force-exit display removed
         print(f"   Tracking: {len(self.positions)} position(s)")
         
         print("\n✅ Tracker started. Monitoring snipes and positions...")
         print("="*80)
+        
+        # Counter for periodic PNL reports
+        report_counter = 0
+        report_interval = 10  # Send report every 10 cycles (about every 5 minutes)
         
         while self.running:
             try:
@@ -313,6 +371,21 @@ class EnhancedPositionTracker:
                 
                 # Monitor positions
                 await self.monitor_positions()
+                
+                # Send periodic PNL report
+                report_counter += 1
+                if report_counter >= report_interval:
+                    try:
+                        summary = n.get_position_performance_summary()
+                        if "No positions" not in summary and "Error" not in summary:
+                            message = (
+                                f"📊 *KALI POSITION TRACKER REPORT* 📊\n\n"
+                                f"{summary}"
+                            )
+                            send_telegram_alert(message)
+                    except Exception as report_error:
+                        cprint(f"⚠️ Failed to send periodic PNL report: {report_error}", 'yellow')
+                    report_counter = 0
                 
                 # Wait
                 await asyncio.sleep(self.check_interval)

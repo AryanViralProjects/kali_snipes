@@ -33,14 +33,14 @@ SCAN_MINUTE_MARKS = [0, 15, 30, 45]
 ############### main.py configurations ###############
 
 EXIT_ALL_POSITIONS = False # when this is set to true, we are exiting all positions in FULL
-DO_NOT_TRADE_LIST = ['So11111111111111111111111111111111111111111','cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr', '7jjxmbPSUBVj87Zx9VMb7smNB7YsyxMDFbCDoTECRgAF']
+DO_NOT_TRADE_LIST = ['cf8CqpDqTy8NURoyiJer7Ri42XyxMuWVirNQ5E6pump','DsfwbGtT2pSFaFTZUe6hwwir2wQvFvXsYahC4uv6T85y', 'Q1BaFmfN8TXdMVS98RYMhFZWRzVTCp8tUDhqM9CgcAL','HiZZAjSHf8W53QPtWYzj1y9wqhdirg124fiEHFGiUpQh', 'AuabGXArmR3QwuKxT3jvSViVPscQASkFAvnGDQCE8tfm','rxkExwV2Gay2Bf1so4chsZj7f4MiLKTx45bd9hQy6dK','BmDXugmfBhqKE7S2KVdDnVSNGER5LXhZfPkRmsDfVuov','423scBCY2bzX6YyqwkjCfWN114JY3xvyNNZ1WsWytZbF','7S6i87ZY29bWNbkviR2hyEgRUdojjMzs1fqMSXoe3HHy', '8nBNfJsvtVmZXhbyLCBg3ndVW2Zwef7oHuCPjQVbRqfc','FqW3CJYF3TfR49WXRusxqCbJMNSjnay1A51sqP34ZxcB','EwsHNUuAtPc6SHkhMu8sQoyL6R4jnWYUU1ugstHXo5qQ', '9Y9yqdNUL76v1ybpkQnVUj35traGEHXTBJB2b1iszFVv', 'Fd1hzhprThxCwz2tv5rTKyFeVCyEKRHaGqhT7hDh4fsW', '83227N9Fq4h1HMNnuKut61beYcB7fsCnRbzuFDCt2rRQ', 'J1oqg1WphZaiRDTfq7gAXho6K1xLoRMxVvVG5BBva3fh', 'GEvQuL9DT2UDtuTCCyjxm6KXEc7B5oguTHecPhKad8Dr', '7jjxmbPSUBVj87Zx9VMb7smNB7YsyxMDFbCDoTECRgAF']
 # to never open a position on tokens like USDC since thats the base, and tokens that may be frozen or broken, place above
 # can also put in closed_position.txt but if the bot gets into a frozen token, closed_positions wont work and youll need to put above
 USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 MY_SOLANA_ADDERESS =  "B5MYmAaSAyiJ7dLNfyhHNMTyp3oGye6cYPe8h6taU6qp" # PUT YOUR ADDRESS HERE
-USDC_SIZE = 3
-MAX_POSITIONS = 2
+USDC_SIZE = 4
+MAX_POSITIONS = 1
 SELL_AT_MULTIPLE = 1.5 # Exit at 50% profit (1.5x the investment) 
 STOP_LOSS_PERCENTAGE = -.6 # -.7 = down 70%, set to -.99 to essentialy disable
 SELL_AMOUNT_PERCENTAGE = 0.7 # Sell 70% of position when taking profits, keep 30% for bigger gains 
@@ -71,28 +71,28 @@ INTELLIGENCE_LOG_REJECTIONS = True  # Log all rejected tokens for analysis
 # USDC_MIN_BUY_SIZE = 1   # The absolute minimum USDC to spend on a single trade
 
 # Advanced Tiered Profit Taking Strategy
-STOP_LOSS_PERCENTAGE = -0.25  # TIGHTENED: -25% stop loss (was -60%)
+STOP_LOSS_PERCENTAGE = -0.10  # TIGHTENED: -25% stop loss (was -60%)
 SELL_AT_MULTIPLE = 1.5  # This becomes our FIRST profit target (50% profit)
 
 # Multi-Tier Profit Taking System
 # Each tier sells a portion of REMAINING position at increasing profit levels
 SELL_TIERS = [
     # Tier 1: At 50% profit (1.5x), sell 70% of current holdings
-    {'profit_multiple': 1.5, 'sell_portion': 0.7, 'name': 'Take Profit'},
+    {'profit_multiple': 1.5, 'sell_portion': 1.0, 'name': 'Take Profit'},
 
     # Tier 2: At 100% profit (2x), sell 50% of current holdings
-    {'profit_multiple': 2.0, 'sell_portion': 0.5, 'name': 'First Major Profit'},
+    # {'profit_multiple': 2.0, 'sell_portion': 0.5, 'name': 'First Major Profit'},
     
-    # Tier 3: At 400% profit (5x), sell 50% of remaining holdings  
-    {'profit_multiple': 5.0, 'sell_portion': 0.5, 'name': 'Moon Shot'},
+    # # Tier 3: At 400% profit (5x), sell 50% of remaining holdings  
+    # {'profit_multiple': 5.0, 'sell_portion': 0.5, 'name': 'Moon Shot'},
     
-    # Tier 4: At 1000% profit (11x), sell 75% of remaining holdings
-    {'profit_multiple': 11.0, 'sell_portion': 0.75, 'name': 'Generational Wealth'}
+    # # Tier 4: At 1000% profit (11x), sell 75% of remaining holdings
+    # {'profit_multiple': 11.0, 'sell_portion': 0.75, 'name': 'Generational Wealth'}
 ]
 
 # Position State Tracking
 OPEN_POSITIONS_STATE_FILE = './data/open_positions_state.json'
-ENABLE_DYNAMIC_SIZING = False  # Disable dynamic position sizing - use fixed $3 trades
+ENABLE_DYNAMIC_SIZING = True  # Disable dynamic position sizing - use fixed $3 trades
 ENABLE_TIERED_EXITS = True    # Enable tiered profit taking system
 
 # Position tracker ownership of exits
@@ -142,7 +142,48 @@ pnl_end_min = 58
 HOURS_TO_LOOK_AT_NEW_LAUNCHES = 1.0
 
 # Maximum token age to trade (reject tokens older than this)
-MAX_TOKEN_AGE_HOURS = 1.0  # Only trade tokens created within last 4 hours
+MAX_TOKEN_AGE_HOURS = 1.0  # Only trade tokens created within last 24 hours
+
+# === FRESHNESS FILTER (Low-latency 1m OHLCV gate) ===
+# Enable to reject older tokens quickly before heavy checks
+ENABLE_FRESHNESS_FILTER = True
+# Reject if more than this many 1-minute candles are present in recent window
+FRESH_MAX_1M_CANDLES = 10
+# OHLCV lookback window in minutes for freshness evaluation
+FRESH_INITIAL_WINDOW_MIN = 20
+# Momentum check on first few 1m candles
+FRESH_ENABLE_MOMENTUM_CHECK = True
+FRESH_MIN_VOLUME_USD_FIRST5 = 5000  # Sum of volumes of first up-to-5 candles
+# Catastrophic dump threshold between first two candles (80% drop)
+FRESH_CATASTROPHIC_DUMP_RATIO = 0.2
+# Buy/Sell pressure check (proxy via Birdeye overview buy1h/sell1h unless unique data available)
+FRESH_ENABLE_PRESSURE_CHECK = True
+FRESH_MIN_BUY_SELL_RATIO = 2.0
+FRESH_USE_OVERVIEW_COUNTS_AS_PROXY = True
+
+# === PUMP FILTER (Target strong 5-minute momentum) ===
+ENABLE_PUMP_FILTER = True
+# Minimum USD volume across last 5 one-minute candles (softer)
+PUMP_MIN_VOL_5M_USD = 2500
+# Minimum number of green candles in last 5 (softer)
+PUMP_MIN_GREEN_CANDLES_5M = 2
+# Minimum price change over last 5 minutes (softer)
+PUMP_MIN_PRICE_CHANGE_5M_PCT = 0.05
+# Minimum liquidity to engage pumps (softer)
+PUMP_MIN_LIQUIDITY = 1500
+# Minimum market cap to avoid micro-caps (allow unknown/zero)
+PUMP_MIN_MARKET_CAP = 0
+# Reject if top 10 holders exceed this (reuse MAX_TOP10_HOLDER_PERCENT if desired)
+PUMP_MAX_TOP10_HOLDER_PERCENT = 0.70
+PUMP_HOLDER_CHECK_MIN_WALLETS = 10
+PUMP_HOLDER_CHECK_MIN_TRADES = 5
+# Name-based keyword blacklist (case-insensitive substring match)
+NAME_BLOCKLIST_KEYWORDS = [
+    'deepseek',          # blocks Deepseek / Deepseek AI
+    'deep seek',
+    'deepseek ai',
+    'deepseekai',
+]
 
 ############### ohlcv_filter.py configurations ###############
 MAX_SELL_PERCENTAGE = 100 
@@ -156,7 +197,7 @@ MAX_MARKET_CAP = 30000
 ############### SEQUENTIAL TRADING MODE ###############
 # When enabled, bot will only trade one position at a time
 # It will wait for current position to hit profit target or stop loss before taking new trades
-ENABLE_SEQUENTIAL_MODE = True  # Set to False for multiple concurrent positions
+ENABLE_SEQUENTIAL_MODE = False # Set to False for multiple concurrent positions
 
 # Maximum time to hold a position before force closing (hours)
 # Set to 0 to disable time-based exits

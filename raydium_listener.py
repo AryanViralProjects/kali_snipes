@@ -153,6 +153,46 @@ async def trigger_fast_snipe(token_address, signature):
     cprint(f"⚡ Kali Speed Engine: INTELLIGENCE SNIPE INITIATED for {token_address[-6:]}", 'white', 'on_red', attrs=['bold'])
     
     try:
+        # === GLOBAL POSITION CAP (always enforce) ===
+        try:
+            active_count_now = n.get_active_position_count()
+            if active_count_now >= MAX_POSITIONS:
+                cprint(f"🔒 Position cap reached: {active_count_now}/{MAX_POSITIONS}. Skipping {token_address[-6:]}", 'yellow')
+                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                with open(SEQUENTIAL_SKIPPED_LOG, 'a') as f:
+                    f.write(f'{timestamp},{token_address},{signature},SKIPPED_MAX_POSITIONS\n')
+                return
+        except Exception as cap_err:
+            cprint(f"⚠️ Position cap check error: {cap_err}", 'yellow')
+
+        # === DO-NOT-TRADE / ALREADY-TRADED / RECENT EXIT GUARD ===
+        try:
+            # Skip if token is in DO_NOT_TRADE_LIST
+            if token_address in DO_NOT_TRADE_LIST:
+                cprint(f"🚫 Skip {token_address[-6:]}: in DO_NOT_TRADE_LIST", 'red')
+                return
+            # Skip if token already recorded as closed/traded previously
+            if os.path.exists(CLOSED_POSITIONS_TXT):
+                with open(CLOSED_POSITIONS_TXT, 'r') as f:
+                    closed_tokens = set(line.strip() for line in f if line.strip())
+                if token_address in closed_tokens:
+                    cprint(f"🚫 Skip {token_address[-6:]}: previously traded/closed", 'red')
+                    return
+            # Skip if very recently exited by tracker (cooldown to prevent instant re-entry)
+            try:
+                if n.is_recently_exited(token_address, within_seconds=180):
+                    cprint(f"🚫 Skip {token_address[-6:]}: recently exited (cooldown)", 'red')
+                    return
+            except Exception:
+                pass
+        except Exception as guard_err:
+            cprint(f"⚠️ Trade guard check error: {guard_err}", 'yellow')
+
+        # === API-BASED AGE GATE ===
+        age_hours = n.get_token_age_hours_api(token_address, prefer='birdeye')
+        if age_hours is not None and age_hours > MAX_TOKEN_AGE_HOURS:
+            cprint(f"🚫 Age gate: {token_address[-6:]} is {age_hours:.2f}h old (> {MAX_TOKEN_AGE_HOURS}h). Rejecting.", 'red')
+            return
         # === NEW: SEQUENTIAL MODE CHECK ===
         if ENABLE_SEQUENTIAL_MODE:
             if n.has_active_positions():
@@ -169,10 +209,24 @@ async def trigger_fast_snipe(token_address, signature):
             # Clean up any closed positions before proceeding
             n.clean_closed_positions()
         
+        # === QUICK PUMP GATE (5m momentum + quality) ===
+        try:
+            if not n.passes_pump_momentum_filter(token_address, d.birdeye):
+                cprint("🚫 Quick pump gate: rejected before intelligence vetting", 'red')
+                return
+        except Exception as pump_err:
+            cprint(f"⚠️ Pump gate error (continuing to vetting): {pump_err}", 'yellow')
+
         # === INTELLIGENCE ENGINE VETTING ===
         cprint(f"🧠 Kali Intelligence: Running comprehensive vetting pipeline...", 'white', 'on_blue', attrs=['bold'])
         
         # Run the comprehensive intelligence vetting
+        # Name keyword blocklist using Birdeye name
+        overview = n.get_token_overview(token_address)
+        tname = str(overview.get('name', '')).lower()
+        if any(kw in tname for kw in NAME_BLOCKLIST_KEYWORDS):
+            cprint(f"🚫 Name gate: blocked by keyword list ({overview.get('name','')})", 'red')
+            return
         is_safe = n.pre_trade_token_vetting(token_address, d.birdeye, d.rpc_url)
         
         if not is_safe:
@@ -230,10 +284,6 @@ async def trigger_fast_snipe(token_address, signature):
                 cprint(f"✅ DEBUG: Position recording completed for {token_address[-6:]}", 'green')
             except Exception as record_error:
                 cprint(f"❌ DEBUG: Failed to record position: {record_error}", 'red')
-            
-            # Add to closed positions to prevent re-entry
-            with open(CLOSED_POSITIONS_TXT, 'a') as f:
-                f.write(f'{token_address}\n')
                 
             # Log the successful snipe with fixed size info
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

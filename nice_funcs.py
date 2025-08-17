@@ -13,7 +13,10 @@ import os
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solana.rpc.api import Client
-from solana.rpc.types import TxOpts, Commitment 
+from solana.rpc.types import TxOpts, Commitment
+
+# Telegram alert import
+from telegram_manager import send_telegram_alert 
 
 def create_keypair_from_key(key_data):
     """
@@ -71,6 +74,178 @@ def get_sol_balance(wallet_address):
         cprint(f"⚠️ Kali: Error getting SOL balance: {str(e)}", 'white', 'on_red')
         return None, None
 
+
+def _parse_datetime_from_text(text: str):
+    """Best-effort parse of a datetime string returned by web search."""
+    import re
+    from datetime import datetime, timezone
+    candidates = []
+    # ISO 8601 with Z
+    for m in re.findall(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", text):
+        try:
+            dt = datetime.strptime(m, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            candidates.append(dt)
+        except Exception:
+            pass
+    # 'YYYY-MM-DD HH:MM:SS UTC'
+    for m in re.findall(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\s*UTC", text):
+        try:
+            clean = m.replace("T", " ").replace(" UTC", "")
+            dt = datetime.strptime(clean, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            candidates.append(dt)
+        except Exception:
+            pass
+    # 'MM/DD/YYYY HH:MM:SS' (Birdeye style), assume UTC if timezone absent
+    for m in re.findall(r"\b\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\b", text):
+        try:
+            dt = datetime.strptime(m, "%m/%d/%Y %H:%M:%S").replace(tzinfo=timezone.utc)
+            candidates.append(dt)
+        except Exception:
+            pass
+    # If we found any, return the earliest (creation)
+    if candidates:
+        candidates.sort()
+        return candidates[0]
+    return None
+
+
+def _parse_relative_age_hours_from_text(text: str):
+    """Parse relative age strings like 'Pair created 1h 8m ago' into hours."""
+    import re
+    total_hours = None
+    # Patterns: '1h 8m ago', '2h ago', '45m ago'
+    rel = re.search(r"(\d+)\s*h(?:ours?)?\s*(\d+)?\s*m?", text, re.IGNORECASE)
+    if rel:
+        hours = int(rel.group(1))
+        minutes = int(rel.group(2)) if rel.group(2) else 0
+        total_hours = hours + minutes/60.0
+        return total_hours
+    # Minutes-only
+    relm = re.search(r"(\d+)\s*m(?:in(?:ute)?s?)?\s*ago", text, re.IGNORECASE)
+    if relm:
+        minutes = int(relm.group(1))
+        return minutes/60.0
+    return None
+
+
+def get_token_age_hours_perplexity(
+    token_mint_address: str,
+    model: str = 'sonar',
+    timeout: int = 12,
+    source_preference: str = 'solscan',  # 'birdeye' | 'dexscreener' | 'solscan' | 'mixed'
+    attempts: int = 1,
+):
+    """
+    Uses Perplexity Sonar to find the token creation timestamp from a block explorer page
+    and returns the token age in hours (float). Returns None if undetermined.
+    """
+    try:
+        api_key = getattr(d, 'perplexity_key', None)
+        if not api_key:
+            cprint("Sarsa/Perplexity: Missing API key in dontshare.py (perplexity_key)", 'yellow')
+            return None
+
+        # base URLs
+        solscan_url = f"https://solscan.io/token/{token_mint_address}"
+        birdeye_url = f"https://birdeye.so/token/{token_mint_address}?chain=solana"
+        dexscreener_url = f"https://dexscreener.com/solana/{token_mint_address}"
+
+        def build_prompt(preference: str) -> str:
+            sources = []
+            if preference == 'birdeye':
+                sources = [
+                    f"Birdeye: {birdeye_url}",
+                    f"Solscan: {solscan_url}",
+                    f"Dexscreener: {dexscreener_url}",
+                ]
+            elif preference == 'dexscreener':
+                sources = [
+                    f"Dexscreener: {dexscreener_url}",
+                    f"Solscan: {solscan_url}",
+                    f"Birdeye: {birdeye_url}",
+                ]
+            elif preference == 'solscan':
+                sources = [
+                    f"Solscan: {solscan_url}",
+                    f"Birdeye: {birdeye_url}",
+                    f"Dexscreener: {dexscreener_url}",
+                ]
+            else:
+                sources = [
+                    f"Solscan: {solscan_url}",
+                    f"Birdeye: {birdeye_url}",
+                    f"Dexscreener: {dexscreener_url}",
+                ]
+            source_lines = "\n".join(sources)
+            return (
+                "You are checking the creation time of a Solana token by its mint address.\n"
+                f"Mint: {token_mint_address}\n"
+                "Visit these pages (in the given order of preference) and find the very first transaction (mint creation or pair creation).\n"
+                f"{source_lines}\n"
+                "Return ONLY the UTC timestamp as ISO 8601 (YYYY-MM-DDTHH:MM:SSZ). If you can only find relative time like 'Pair created 1h 8m ago', return exactly that phrase.\n"
+                "If you cannot determine it, reply exactly with the word: unknown"
+            )
+
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+        preferences = [source_preference]
+        if source_preference != 'birdeye':
+            preferences.append('birdeye')
+        if source_preference != 'dexscreener':
+            preferences.append('dexscreener')
+        if source_preference != 'solscan':
+            preferences.append('solscan')
+
+        # Try across preferences and attempts
+        for pref in preferences:
+            for _ in range(max(1, attempts)):
+                payload = {
+                    "model": model,
+                    "messages": [{"role": "user", "content": build_prompt(pref)}],
+                    "temperature": 0.0,
+                }
+                resp = requests.post("https://api.perplexity.ai/chat/completions", headers=headers, json=payload, timeout=timeout)
+                if not resp.ok:
+                    continue
+                data = resp.json()
+                content = None
+                try:
+                    content = data['choices'][0]['message']['content']
+                except Exception:
+                    content = str(data)
+
+                if not content:
+                    continue
+                if content.strip().lower() == 'unknown':
+                    continue
+
+                # Parse absolute time
+                dt = _parse_datetime_from_text(content)
+                if not dt:
+                    dt = _parse_datetime_from_text(json.dumps(data))
+                if dt:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    return (now - dt).total_seconds() / 3600.0
+
+                # Parse relative age
+                rel_hours = _parse_relative_age_hours_from_text(content)
+                if rel_hours is None:
+                    rel_hours = _parse_relative_age_hours_from_text(json.dumps(data))
+                if rel_hours is not None:
+                    return rel_hours
+
+        # If all attempts exhausted
+        return None
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        age_hours = (now - dt).total_seconds() / 3600.0
+        return age_hours
+    except Exception as e:
+        cprint(f"Perplexity exception: {e}", 'yellow')
+        return None
+
 def ask_bid(token_mint_address):
 
     ''' this returns the price '''
@@ -125,6 +300,92 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
     Returns True if the token passes all checks, False otherwise.
     """
     cprint(f"🔬 Kali Intelligence: Vetting token {token_address[-6:]}", 'yellow', attrs=['bold'])
+
+    # === Freshness Filter: ultra-fast 1m OHLCV + pressure gate ===
+    fresh_overview_data = None
+    try:
+        if ENABLE_FRESHNESS_FILTER:
+            # 1) Fetch a small 1m OHLCV window to count candles and evaluate early momentum
+            time_to = int(time.time())
+            time_from = time_to - (FRESH_INITIAL_WINDOW_MIN * 60)
+            ohlcv_url = (
+                f"https://public-api.birdeye.so/defi/ohlcv?address={token_address}"
+                f"&type=1m&time_from={time_from}&time_to={time_to}"
+            )
+            ohlcv_headers = {"X-API-KEY": birdeye_api_key}
+            ohlcv_resp = requests.get(ohlcv_url, headers=ohlcv_headers, timeout=6)
+            if ohlcv_resp.ok:
+                items = (ohlcv_resp.json() or {}).get('data', {}).get('items', [])
+                num_candles = len(items)
+                if num_candles > FRESH_MAX_1M_CANDLES:
+                    cprint(
+                        f"   🚫 Freshness: Too many 1m candles ({num_candles} > {FRESH_MAX_1M_CANDLES}) — old token",
+                        'red'
+                    )
+                    return False
+
+                if FRESH_ENABLE_MOMENTUM_CHECK and num_candles >= 1:
+                    # Use first up to 5 candles for basic momentum/health checks
+                    first_five = items[:5]
+                    # Volume check (Birdeye OHLCV volume is in quote currency; treat as USD proxy)
+                    total_vol_usd = 0.0
+                    try:
+                        for it in first_five:
+                            v = it.get('v', 0) or 0
+                            total_vol_usd += float(v)
+                    except Exception:
+                        total_vol_usd = 0.0
+
+                    if total_vol_usd < FRESH_MIN_VOLUME_USD_FIRST5:
+                        cprint(
+                            f"   🚫 Freshness: Weak initial volume (${total_vol_usd:,.0f} < ${FRESH_MIN_VOLUME_USD_FIRST5:,.0f})",
+                            'red'
+                        )
+                        return False
+
+                    # Catastrophic dump check between candle 1 and 2 where available
+                    if len(items) >= 2:
+                        c1_high = (items[0].get('h') or 0)
+                        c2_low = (items[1].get('l') or 0)
+                        try:
+                            c1_high = float(c1_high)
+                            c2_low = float(c2_low)
+                        except Exception:
+                            c1_high = 0.0
+                            c2_low = 0.0
+                        if c1_high > 0 and c2_low < c1_high * FRESH_CATASTROPHIC_DUMP_RATIO:
+                            cprint(
+                                "   🚫 Freshness: Early catastrophic dump detected (c2_low < 20% of c1_high)",
+                                'red'
+                            )
+                            return False
+
+            # 2) Buy/Sell pressure proxy via overview (fast) unless we add a heavier unique-wallet call later
+            if FRESH_ENABLE_PRESSURE_CHECK and FRESH_USE_OVERVIEW_COUNTS_AS_PROXY:
+                ov_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
+                ov_headers = {"X-API-KEY": birdeye_api_key}
+                ov_resp = requests.get(ov_url, headers=ov_headers, timeout=6)
+                if ov_resp.ok:
+                    ov = (ov_resp.json() or {}).get('data', {})
+                    fresh_overview_data = ov
+                    buy1h = float(ov.get('buy1h', 0) or 0)
+                    sell1h = float(ov.get('sell1h', 0) or 0)
+                    if sell1h <= 0 and buy1h > 0:
+                        ratio = float('inf')
+                    elif buy1h <= 0:
+                        ratio = 0.0
+                    else:
+                        ratio = buy1h / max(sell1h, 1e-9)
+                    if ratio < FRESH_MIN_BUY_SELL_RATIO:
+                        cprint(
+                            f"   🚫 Freshness: Weak buy/sell pressure (ratio {ratio:.2f} < {FRESH_MIN_BUY_SELL_RATIO:.2f})",
+                            'red'
+                        )
+                        return False
+                # If overview not ok, skip pressure check to avoid blocking fresh snipes on brand-new indexing
+    except Exception as fresh_e:
+        cprint(f"   ⚠️ Freshness check error (continuing): {fresh_e}", 'yellow')
+
 
     # === Birdeye Security Check ===
     max_retries = 8  # Increased to handle very new tokens
@@ -269,45 +530,41 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
     cprint("   ✅ ALL SECURITY CHECKS PASSED", 'green')
         
     # === Birdeye Market Overview Check ===
-    max_retries_overview = 8  # Increased to handle very new tokens
-    retry_delay_overview = 5.0  # Longer initial delay for better success rate
-    
-    for attempt in range(max_retries_overview):
-        try:
-            overview_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
-            overview_headers = {"X-API-KEY": birdeye_api_key}
-            overview_response = requests.get(overview_url, headers=overview_headers, timeout=8)
-            
-            if overview_response.status_code == 200:
-                # Success! Break out of retry loop
-                break
-            elif overview_response.status_code in [555, 404, 500, 502, 503]:
-                # These codes suggest data not ready yet - retry
+    if fresh_overview_data is None:
+        max_retries_overview = 8  # Increased to handle very new tokens
+        retry_delay_overview = 5.0  # Longer initial delay for better success rate
+        for attempt in range(max_retries_overview):
+            try:
+                overview_url = f"https://public-api.birdeye.so/defi/token_overview?address={token_address}"
+                overview_headers = {"X-API-KEY": birdeye_api_key}
+                overview_response = requests.get(overview_url, headers=overview_headers, timeout=8)
+                if overview_response.status_code == 200:
+                    fresh_overview_data = (overview_response.json() or {}).get('data', {})
+                    break
+                elif overview_response.status_code in [555, 404, 500, 502, 503]:
+                    if attempt < max_retries_overview - 1:
+                        cprint(f"   ⏳ Overview data not ready (Code: {overview_response.status_code}), retrying in {retry_delay_overview}s... (attempt {attempt + 1})", 'yellow')
+                        time.sleep(retry_delay_overview)
+                        retry_delay_overview *= 1.5
+                        continue
+                    else:
+                        cprint(f"   🚨 VETTING FAILED: Birdeye overview API error after {max_retries_overview} attempts (Code: {overview_response.status_code})", 'red')
+                        return False
+                else:
+                    cprint(f"   🚨 VETTING FAILED: Birdeye overview API error (Code: {overview_response.status_code})", 'red')
+                    return False
+            except requests.exceptions.RequestException as e:
                 if attempt < max_retries_overview - 1:
-                    cprint(f"   ⏳ Overview data not ready (Code: {overview_response.status_code}), retrying in {retry_delay_overview}s... (attempt {attempt + 1})", 'yellow')
+                    cprint(f"   ⏳ Network error on overview, retrying in {retry_delay_overview}s... (attempt {attempt + 1}): {e}", 'yellow')
                     time.sleep(retry_delay_overview)
-                    retry_delay_overview *= 1.5  # Exponential backoff
+                    retry_delay_overview *= 1.5
                     continue
                 else:
-                    cprint(f"   🚨 VETTING FAILED: Birdeye overview API error after {max_retries_overview} attempts (Code: {overview_response.status_code})", 'red')
+                    cprint(f"   🚨 VETTING FAILED: Network error during overview check after {max_retries_overview} attempts: {e}", 'red')
                     return False
-            else:
-                # Other errors (rate limit, auth, etc.) - fail immediately
-                cprint(f"   🚨 VETTING FAILED: Birdeye overview API error (Code: {overview_response.status_code})", 'red')
-                return False
-                
-        except requests.exceptions.RequestException as e:
-            if attempt < max_retries_overview - 1:
-                cprint(f"   ⏳ Network error on overview, retrying in {retry_delay_overview}s... (attempt {attempt + 1}): {e}", 'yellow')
-                time.sleep(retry_delay_overview)
-                retry_delay_overview *= 1.5
-                continue
-            else:
-                cprint(f"   🚨 VETTING FAILED: Network error during overview check after {max_retries_overview} attempts: {e}", 'red')
-                return False
-    
-    # Process the successful overview response
-    overview_data = overview_response.json().get('data', {})
+
+    # Process the overview data (from freshness stage or retries)
+    overview_data = fresh_overview_data or {}
     if not overview_data:
         cprint("   🚨 VETTING FAILED: No overview data returned from Birdeye", 'red')
         return False
@@ -336,7 +593,6 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
     try:
         creation_time = overview_data.get('creation_time') or overview_data.get('createdAt')
         if creation_time:
-            import time
             current_time = time.time()
             # Convert creation_time to timestamp if it's a string
             if isinstance(creation_time, str):
@@ -357,30 +613,48 @@ def pre_trade_token_vetting(token_address, birdeye_api_key, helius_rpc_url):
                 token_age_hours = (current_time - creation_timestamp) / 3600
                 
                 # Reject tokens older than configured limit
-                from config import MAX_TOKEN_AGE_HOURS
-                if token_age_hours > MAX_TOKEN_AGE_HOURS:
-                    cprint(f"   🚨 VETTING FAILED: Token too old ({token_age_hours:.1f}h > {MAX_TOKEN_AGE_HOURS}h)", 'red')
+                try:
+                    age_cap = MAX_TOKEN_AGE_HOURS
+                except NameError:
+                    from config import MAX_TOKEN_AGE_HOURS as age_cap  # fallback
+                if token_age_hours > age_cap:
+                    cprint(f"   🚨 VETTING FAILED: Token too old ({token_age_hours:.1f}h > {age_cap}h)", 'red')
                     return False
                 else:
                     cprint(f"   ✅ Token age check passed: {token_age_hours:.1f}h old", 'green')
             else:
-                # If we can't parse creation time, check other indicators for OLD tokens
-                if liquidity > 1000000 or market_cap > 1000000:  # $1M+ suggests old token
+                # Fallback: compute age via RPC/Birdeye mixed method to avoid sniping old tokens
+                fallback_age = get_token_age_hours_api(token_address, prefer='birdeye')
+                try:
+                    age_cap = MAX_TOKEN_AGE_HOURS
+                except NameError:
+                    from config import MAX_TOKEN_AGE_HOURS as age_cap
+                if isinstance(fallback_age, (int, float)) and fallback_age > age_cap:
+                    cprint(f"   🚨 VETTING FAILED: Token too old by fallback age ({fallback_age:.1f}h > {age_cap}h)", 'red')
+                    return False
+                # If fallback is unavailable, apply heuristic on very high liq/mc suggesting old token
+                if fallback_age is None and (liquidity > 1_000_000 or market_cap > 1_000_000):
                     cprint(f"   🚨 VETTING FAILED: High liquidity/MC suggests old token (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
                     return False
-                else:
-                    # For NEW tokens: No age data is NORMAL - they're too new for Birdeye to have indexed yet
-                    cprint(f"   ✅ Token age check: No age data (likely very new token) - proceeding", 'green')
+                cprint("   ✅ Token age check: No reliable age but no old-token indicators", 'green')
         else:
             # NEW LOGIC: For Speed Engine detections, NO age data often means VERY NEW token
             # Check if this is a reasonable new token based on liquidity/MC
-            if liquidity > 1000000 or market_cap > 1000000:  # $1M+ suggests old token
+            # Before trusting heuristics, try the fallback fast age check
+            fallback_age2 = get_token_age_hours_api(token_address, prefer='birdeye')
+            try:
+                age_cap2 = MAX_TOKEN_AGE_HOURS
+            except NameError:
+                from config import MAX_TOKEN_AGE_HOURS as age_cap2
+            if isinstance(fallback_age2, (int, float)) and fallback_age2 > age_cap2:
+                cprint(f"   🚨 VETTING FAILED: Token too old by fallback age ({fallback_age2:.1f}h > {age_cap2}h)", 'red')
+                return False
+            if fallback_age2 is None and (liquidity > 1_000_000 or market_cap > 1_000_000):
                 cprint(f"   🚨 VETTING FAILED: High liquidity/MC without age data suggests old token (Liq: ${liquidity:,.0f}, MC: ${market_cap:,.0f})", 'red')
                 return False
-            else:
-                # Low liquidity + no age data = likely VERY NEW token from Speed Engine
-                cprint(f"   ✅ Token age check: No age data but low liquidity/MC - likely fresh token", 'green')
-                cprint(f"   Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f} (proceeding)", 'cyan')
+            # Low liquidity + no reliable age = likely very new; proceed
+            cprint(f"   ✅ Token age check: No age data but low liquidity/MC - likely fresh token", 'green')
+            cprint(f"   Liquidity: ${liquidity:,.0f}, MC: ${market_cap:,.0f} (proceeding)", 'cyan')
     except Exception as age_error:
         cprint(f"   ⚠️ Token age check error: {age_error} (proceeding anyway for new tokens)", 'yellow')
 
@@ -415,6 +689,105 @@ def get_deployer_address(token_address, birdeye_api_key):
         cprint(f"   ⚠️ Could not get deployer address: {e}", 'yellow')
     return None
 
+
+def get_token_creation_timestamp_birdeye(token_mint_address: str):
+    """
+    Try to fetch creation timestamp from Birdeye token_overview.
+    Returns UNIX epoch seconds (float) or None.
+    """
+    try:
+        API_KEY = d.birdeye
+        url = f"https://public-api.birdeye.so/defi/token_overview?address={token_mint_address}"
+        headers = {"X-API-KEY": API_KEY}
+        r = requests.get(url, headers=headers, timeout=8)
+        if not r.ok:
+            return None
+        data = r.json().get('data', {})
+        creation = data.get('creation_time') or data.get('createdAt')
+        if not creation:
+            return None
+        # createdAt may be ISO or epoch
+        try:
+            # epoch seconds
+            if isinstance(creation, (int, float)):
+                return float(creation)
+            # ISO string
+            from datetime import datetime, timezone
+            # Normalize Z
+            iso = str(creation).replace('Z', '+00:00')
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+
+def get_token_creation_timestamp_rpc(token_mint_address: str, max_pages: int = 20, page_limit: int = 100):
+    """
+    Use Helius RPC getSignaturesForAddress to find the oldest signature touching the mint address
+    and return its blockTime as UNIX epoch seconds. Paginates up to max_pages.
+    """
+    try:
+        before_sig = None
+        oldest_time = None
+        for _ in range(max_pages):
+            params = [token_mint_address, {"limit": page_limit}]
+            if before_sig:
+                params[1]["before"] = before_sig
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": params,
+            }
+            resp = requests.post(d.rpc_url, json=payload, timeout=8)
+            if not resp.ok:
+                break
+            arr = resp.json().get('result', [])
+            if not arr:
+                break
+            # Update oldest
+            for entry in arr:
+                bt = entry.get('blockTime')
+                if bt is not None:
+                    if oldest_time is None or bt < oldest_time:
+                        oldest_time = bt
+            # Prepare next page
+            before_sig = arr[-1].get('signature')
+            if len(arr) < page_limit:
+                break
+        return float(oldest_time) if oldest_time is not None else None
+    except Exception:
+        return None
+
+
+def get_token_age_hours_api(token_mint_address: str, prefer: str = 'birdeye'):
+    """
+    Reliable token age via APIs. Try Birdeye first, then fallback to RPC scan.
+    Returns age hours (float) or None if undetermined.
+    """
+    from datetime import datetime, timezone
+    # Order by preference
+    sources = ['birdeye', 'rpc']
+    if prefer == 'rpc':
+        sources = ['rpc', 'birdeye']
+
+    ts = None
+    for src in sources:
+        if src == 'birdeye':
+            ts = get_token_creation_timestamp_birdeye(token_mint_address)
+        elif src == 'rpc':
+            ts = get_token_creation_timestamp_rpc(token_mint_address)
+        if ts:
+            break
+    if not ts:
+        return None
+    now = datetime.now(timezone.utc).timestamp()
+    age_hours = (now - float(ts)) / 3600.0
+    return age_hours
 
 def check_deployer_blacklist(deployer_address):
     """
@@ -675,7 +1048,12 @@ def has_active_positions():
         
         if not holdings.empty:
             # Filter out USDC, SOL, and any DO_NOT_TRADE tokens
-            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST
+            try:
+                with open(CLOSED_POSITIONS_TXT, 'r') as f:
+                    closed_list = [line.strip() for line in f if line.strip()]
+            except Exception:
+                closed_list = []
+            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST + closed_list
             
             # Check each holding
             for _, row in holdings.iterrows():
@@ -727,7 +1105,12 @@ def get_active_position_count():
         
         if not holdings.empty:
             # Filter out USDC, SOL, and any DO_NOT_TRADE tokens
-            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST
+            try:
+                with open(CLOSED_POSITIONS_TXT, 'r') as f:
+                    closed_list = [line.strip() for line in f if line.strip()]
+            except Exception:
+                closed_list = []
+            excluded_tokens = [USDC_CA, 'So11111111111111111111111111111111111111112'] + DO_NOT_TRADE_LIST + closed_list
             
             for _, row in holdings.iterrows():
                 token_address = row['Mint Address']
@@ -835,7 +1218,7 @@ def execute_tiered_sell(token_address, tier_index, current_position_value):
         cprint(f"   Selling {sell_portion * 100:.0f}% of current position", 'green')
         
         # Get current token balance
-        current_balance = get_position(token_address)
+        current_balance = get_position_fast(token_address)
         if current_balance <= 0:
             cprint(f"⚠️ Kali Strategy: No position found for {token_address[-6:]}", 'yellow')
             return False
@@ -1045,6 +1428,13 @@ def get_names_nosave(df):
         
         # Get token overview data (contains name and price info)
         token_data = get_token_overview(token_mint_address)
+        # Name keyword blocklist
+        token_name_lower = str(token_data.get('name', '')).lower()
+        if any(kw in token_name_lower for kw in NAME_BLOCKLIST_KEYWORDS):
+            # Skip this row by setting zero value
+            names.append(token_data.get('name', f'Token-{token_mint_address[-6:]}'))
+            usd_values.append(0.0)
+            continue
         
         # Extract token name
         token_name = token_data.get('name', f'Token-{token_mint_address[-6:]}')
@@ -1080,6 +1470,82 @@ def get_names_nosave(df):
     df['USD Value'] = usd_values
     
     return df
+def passes_pump_momentum_filter(token_mint_address: str, birdeye_api_key: str) -> bool:
+    """
+    Fast 5-minute momentum screen using Birdeye OHLCV (1m) and overview.
+    Returns True if the token shows strong pump characteristics.
+    """
+    if not ENABLE_PUMP_FILTER:
+        return True
+    try:
+        # 1) Overview for liquidity, mc, top10 holders
+        ov = get_token_overview(token_mint_address)
+        liquidity = float(ov.get('liquidity', 0) or 0)
+        mc = float(ov.get('mc', 0) or 0)
+        top10 = ov.get('top10HolderPercent', None)
+        wallets24h = int(ov.get('uniqueWallet24h', 0) or 0)
+        trades1h = int((ov.get('buy1h', 0) or 0) + (ov.get('sell1h', 0) or 0))
+        if liquidity < PUMP_MIN_LIQUIDITY:
+            cprint(f"   🚫 Pump filter: Low liquidity (${liquidity:,.0f} < ${PUMP_MIN_LIQUIDITY:,.0f})", 'red')
+            return False
+        if mc < PUMP_MIN_MARKET_CAP:
+            cprint(f"   🚫 Pump filter: Low market cap (${mc:,.0f} < ${PUMP_MIN_MARKET_CAP:,.0f})", 'red')
+            return False
+        # Only enforce holder concentration if we have basic activity/holders context
+        if top10 is not None:
+            try:
+                top10f = float(top10 or 0)
+            except Exception:
+                top10f = 1.0
+            if wallets24h >= PUMP_HOLDER_CHECK_MIN_WALLETS or trades1h >= PUMP_HOLDER_CHECK_MIN_TRADES:
+                if top10f > PUMP_MAX_TOP10_HOLDER_PERCENT:
+                    cprint(f"   🚫 Pump filter: Concentrated holders ({top10f:.0%} > {PUMP_MAX_TOP10_HOLDER_PERCENT:.0%})", 'red')
+                    return False
+            else:
+                cprint("   ℹ️ Pump filter: Skipping top holder check due to low wallets/trades (very fresh)", 'yellow')
+        # 2) 5-minute OHLCV window (1m bars)
+        import time as _t
+        t_to = int(_t.time())
+        t_from = t_to - 5 * 60
+        url = (
+            f"https://public-api.birdeye.so/defi/ohlcv?address={token_mint_address}"
+            f"&type=1m&time_from={t_from}&time_to={t_to}"
+        )
+        headers = {"X-API-KEY": birdeye_api_key}
+        resp = requests.get(url, headers=headers, timeout=6)
+        items = []
+        if resp.ok:
+            items = (resp.json() or {}).get('data', {}).get('items', [])
+        if len(items) < 2:
+            cprint("   🚫 Pump filter: Not enough 1m candles", 'red')
+            return False
+        total_vol = 0.0
+        greens = 0
+        first_open = float(items[0].get('o', 0) or 0)
+        last_close = float(items[-1].get('c', 0) or 0)
+        for it in items[-5:]:
+            o = float(it.get('o', 0) or 0)
+            c = float(it.get('c', 0) or 0)
+            v = float(it.get('v', 0) or 0)
+            total_vol += v
+            if c > o:
+                greens += 1
+        if total_vol < PUMP_MIN_VOL_5M_USD:
+            cprint(f"   🚫 Pump filter: 5m volume low (${total_vol:,.0f} < ${PUMP_MIN_VOL_5M_USD:,.0f})", 'red')
+            return False
+        if greens < PUMP_MIN_GREEN_CANDLES_5M:
+            cprint(f"   🚫 Pump filter: Only {greens} green candles in last 5 (< {PUMP_MIN_GREEN_CANDLES_5M})", 'red')
+            return False
+        if first_open > 0:
+            change_pct = (last_close / first_open) - 1.0
+            if change_pct < PUMP_MIN_PRICE_CHANGE_5M_PCT:
+                cprint(f"   🚫 Pump filter: 5m change {change_pct:.1%} < {PUMP_MIN_PRICE_CHANGE_5M_PCT:.0%}", 'red')
+                return False
+        cprint(f"   ✅ Pump filter passed: Vol=${total_vol:,.0f}, greens={greens}/5", 'green')
+        return True
+    except Exception as e:
+        cprint(f"   ⚠️ Pump filter error: {e}", 'yellow')
+        return False
 
 def get_names(df):
     names = []  # List to hold the collected names
@@ -1087,6 +1553,10 @@ def get_names(df):
     for index, row in df.iterrows():
         token_mint_address = row['address']
         token_data = get_token_overview(token_mint_address)
+        # Skip if name matches blocklist
+        tname = str(token_data.get('name', '')).lower()
+        if any(kw in tname for kw in NAME_BLOCKLIST_KEYWORDS):
+            continue
         time.sleep(2)
         
         # Extract the token name using the 'name' key from the token_data
@@ -1164,15 +1634,22 @@ def fetch_wallet_holdings_og(address):
         cprint(f"❌ Kali: Error fetching wallet holdings: {str(e)}", 'white', 'on_red')
 
     # Addresses to exclude from the portfolio display
-    exclude_from_portfolio = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'So11111111111111111111111111111111111111112']
+    exclude_from_portfolio = []
 
     # Filter out SOL and USDC from the dataframe
     if not df.empty:
         df = df[~df['Mint Address'].isin(exclude_from_portfolio)]
 
-    # Filter the dataframe based on the DO_NOT_TRADE_LIST
+    # Filter the dataframe based on the DO_NOT_TRADE_LIST and CLOSED_POSITIONS list
     if not df.empty:
+        try:
+            with open(CLOSED_POSITIONS_TXT, 'r') as f:
+                closed_list = [line.strip() for line in f if line.strip()]
+        except Exception:
+            closed_list = []
         df = df[~df['Mint Address'].isin(DO_NOT_TRADE_LIST)]
+        if closed_list:
+            df = df[~df['Mint Address'].isin(closed_list)]
 
     # Print the DataFrame if it's not empty
     if not df.empty:
@@ -1198,6 +1675,46 @@ def fetch_wallet_token_single(address, token_mint_address):
 
     return df
 
+
+def get_token_balance_quiet(owner_address: str, token_mint_address: str) -> float:
+    """Fast balance lookup for a specific token mint using RPC with mint filter."""
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                owner_address,
+                {"mint": token_mint_address},
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        resp = requests.post(d.rpc_url, json=payload, timeout=8)
+        if resp.status_code != 200:
+            return 0.0
+        data = resp.json().get('result', {}).get('value', [])
+        total = 0.0
+        for acc in data:
+            try:
+                amt = float(acc['account']['data']['parsed']['info']['tokenAmount']['uiAmount'] or 0)
+                total += amt
+            except Exception:
+                continue
+        return total
+    except Exception:
+        return 0.0
+
+
+def get_position_fast(token_mint_address: str, retries: int = 12, delay_seconds: float = 2.0) -> float:
+    """Retrying fast balance checker that avoids verbose portfolio logs and sleeps.
+    Returns the token uiAmount or 0.0 after retries."""
+    for attempt in range(retries):
+        bal = get_token_balance_quiet(MY_SOLANA_ADDERESS, token_mint_address)
+        if bal > 0:
+            return bal
+        if attempt < retries - 1:
+            time.sleep(delay_seconds)
+    return 0.0
 
 def get_position(token_mint_address):
     """
@@ -1506,6 +2023,28 @@ def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client)
             cprint(f"✅ Kali Speed Engine: ULTRA-FAST BUY SUCCESS! 🚀", 'white', 'on_green', attrs=['bold'])
             cprint(f"💎 Token: {token_to_buy[-6:]} | TX: https://solscan.io/tx/{str(tx_signature)}", 'green', attrs=['bold'])
             
+            # --- ADD THIS BLOCK FOR TELEGRAM ALERT ---
+            try:
+                token_name = get_token_overview(token_to_buy).get('name', 'Unknown Token')
+                buy_size_usd = usdc_amount_in_lamports / 1_000_000
+                solscan_link = f"https://solscan.io/tx/{tx_signature}"
+                
+                # Escape special characters for MarkdownV2
+                token_name_safe = token_name.replace('-', '\\-').replace('.', '\\.').replace('_', '\\_')
+                
+                message = (
+                    f"*🔥 KALI SNIPE SUCCESS 🔥*\n\n"
+                    f"*Token:* `{token_name_safe}`\n"
+                    f"*Address:* `{token_to_buy}`\n"
+                    f"*Action:* BUY\n"
+                    f"*Size:* ${buy_size_usd:.2f} USD\n\n"
+                    f"[View on Solscan]({solscan_link})"
+                )
+                send_telegram_alert(message)
+            except Exception as alert_error:
+                cprint(f"⚠️ Failed to format or send BUY Telegram alert: {alert_error}", 'yellow')
+            # --- END OF TELEGRAM ALERT BLOCK ---
+            
             return str(tx_signature)
             
         except Exception as tx_error:
@@ -1540,7 +2079,9 @@ def market_buy_fast(token_to_buy, usdc_amount_in_lamports, keypair, http_client)
 
 
 def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
-
+    """
+    KALI: Sells a token using Jupiter's v6 API with dynamic slippage.
+    """
     import requests
     import json
     import base64
@@ -1548,117 +2089,56 @@ def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
     from solders.transaction import VersionedTransaction
     from solana.rpc.api import Client
     from solana.rpc.types import TxOpts
-    import dontshare as d 
+    import dontshare as d
 
-    # Support both base58 strings and comma-separated byte arrays
     KEY = create_keypair_from_key(d.sol_key)
-    token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
+    usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
     http_client = Client(d.rpc_url)
-    base_quote = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}'
-    swap_url = 'https://quote-api.jup.ag/v6/swap'
     
-    # Initialize counter for swap transaction errors
-    swap_error_count = 0
-    max_retries = 50
+    # 1. Get quote (no slippage needed in the quote request itself)
+    quote_url = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={usdc_mint}&amount={amount}&restrictIntermediateTokens=true'
     
-    # Dynamic slippage attempts: 1% -> 5%
-    for attempt_slippage in DYNAMIC_SLIPPAGE_STEPS_BPS:
-        try:
-            quote_url = f"{base_quote}&slippageBps={attempt_slippage}&restrictIntermediateTokens=true"
-            quote = requests.get(quote_url).json()
+    try:
+        quote = requests.get(quote_url, timeout=10).json()
+        if not quote.get('outAmount'):
+             cprint(f"⚠️ Kali: Could not get quote for selling {QUOTE_TOKEN[-6:]}. The pool may be unstable.", 'yellow')
+             return False
 
-            txRes = requests.post(swap_url,
-                                  headers={"Content-Type": "application/json"},
-                                  data=json.dumps({
-                                      "quoteResponse": quote,
-                                      "userPublicKey": str(KEY.pubkey()),
-                                      "prioritizationFeeLamports": PRIORITY_FEE  # Hardcoded fee
-                                  })).json()
-                                  
-            if 'swapTransaction' not in txRes:
-                cprint(f"⚠️ Kali: No swapTransaction at slippage {attempt_slippage}bps, trying higher...", 'yellow')
-                time.sleep(1)
-                continue
-                
-            swapTx = base64.b64decode(txRes['swapTransaction'])
-            tx1 = VersionedTransaction.from_bytes(swapTx)
-            tx = VersionedTransaction(tx1.message, [KEY])
-            txId = http_client.send_raw_transaction(bytes(tx), TxOpts(skip_preflight=True)).value
-            cprint(f"🌟 Kali: Transaction successful! https://solscan.io/tx/{str(txId)}", 'white', 'on_green')
-            return True
-            
-        except requests.exceptions.RequestException as e:
-            cprint(f"🔄 Kali: Request failed: {e}", 'white', 'on_red')
-            time.sleep(5)
-        except Exception as e:
-            cprint(f"⚠️ Kali: An error occurred: {e}", 'white', 'on_red')
-            time.sleep(5)
-    # All dynamic slippage attempts failed
-    cprint(f"💀 Kali: All dynamic slippage attempts failed for {QUOTE_TOKEN[-4:]} -> USDC", 'white', 'on_red')
-    with open(PERMANENT_BLACKLIST, 'a') as f:
-        f.write(f'{QUOTE_TOKEN}\n')
-    with open(CLOSED_POSITIONS_TXT, 'a') as f:
-        f.write(f'{QUOTE_TOKEN}\n')
-    return False
+        # 2. Get the swap transaction with the dynamicSlippage parameter
+        swap_url = 'https://quote-api.jup.ag/v6/swap'
+        swap_payload = {
+            "quoteResponse": quote,
+            "userPublicKey": str(KEY.pubkey()),
+            "wrapAndUnwrapSol": True,
+            "prioritizationFeeLamports": PRIORITY_FEE,
+            "dynamicSlippage": {"minBps": 100, "maxBps": slippage} # min 1%, max from config
+        }
+        
+        txRes = requests.post(swap_url, headers={"Content-Type": "application/json"}, data=json.dumps(swap_payload), timeout=10).json()
 
+        if 'swapTransaction' not in txRes:
+            error_msg = txRes.get('error', 'Unknown error')
+            cprint(f"💀 Kali: Sell failed for {QUOTE_TOKEN[-6:]}. Jupiter API error: {error_msg}", 'white', 'on_red')
+            # Blacklist on sell failure to avoid getting stuck in a loop
+            with open(PERMANENT_BLACKLIST, 'a') as f:
+                f.write(f'{QUOTE_TOKEN}\n')
+            with open(CLOSED_POSITIONS_TXT, 'a') as f:
+                f.write(f'{QUOTE_TOKEN}\n')
+            return False
 
-def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
+        # 3. Deserialize, sign, and send the transaction
+        swapTx = base64.b64decode(txRes['swapTransaction'])
+        tx1 = VersionedTransaction.from_bytes(swapTx)
+        tx = VersionedTransaction(tx1.message, [KEY])
+        txId = http_client.send_raw_transaction(bytes(tx), TxOpts(skip_preflight=True)).value
+        cprint(f"🌟 Kali: Sell transaction successful! https://solscan.io/tx/{str(txId)}", 'white', 'on_green')
+        return True
 
-    import requests
-    import json
-    import base64
-    from solders.keypair import Keypair
-    from solders.transaction import VersionedTransaction
-    from solana.rpc.api import Client
-    from solana.rpc.types import TxOpts
-    import dontshare as d 
+    except Exception as e:
+        cprint(f"⚠️ Kali: An unexpected error occurred during market sell: {e}", 'white', 'on_red')
+        return False
 
-    # Support both base58 strings and comma-separated byte arrays
-    KEY = create_keypair_from_key(d.sol_key)
-    token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # usdc
-
-    http_client = Client(d.rpc_url)
-    base_quote = f'https://quote-api.jup.ag/v6/quote?inputMint={QUOTE_TOKEN}&outputMint={token}&amount={amount}'
-    swap_url = 'https://quote-api.jup.ag/v6/swap'
-    
-    # Initialize counter for swap transaction errors
-    swap_error_count = 0
-    max_retries = 50
-    
-    # Dynamic slippage attempts: 1% -> 5%
-    for attempt_slippage in DYNAMIC_SLIPPAGE_STEPS_BPS:
-        try:
-            quote_url = f"{base_quote}&slippageBps={attempt_slippage}&restrictIntermediateTokens=true"
-            quote = requests.get(quote_url).json()
-
-            txRes = requests.post(swap_url,
-                                  headers={"Content-Type": "application/json"},
-                                  data=json.dumps({
-                                      "quoteResponse": quote,
-                                      "userPublicKey": str(KEY.pubkey()),
-                                      "prioritizationFeeLamports": PRIORITY_FEE  # Hardcoded fee
-                                  })).json()
-                                  
-            if 'swapTransaction' not in txRes:
-                cprint(f"⚠️ Kali: No swapTransaction at slippage {attempt_slippage}bps, trying higher...", 'yellow')
-                time.sleep(1)
-                continue
-                
-            swapTx = base64.b64decode(txRes['swapTransaction'])
-            tx1 = VersionedTransaction.from_bytes(swapTx)
-            tx = VersionedTransaction(tx1.message, [KEY])
-            txId = http_client.send_raw_transaction(bytes(tx), TxOpts(skip_preflight=True)).value
-            cprint(f"🌟 Kali: Transaction successful! https://solscan.io/tx/{str(txId)}", 'white', 'on_green')
-            return True
-            
-        except requests.exceptions.RequestException as e:
-            cprint(f"🔄 Kali: Request failed: {e}", 'white', 'on_red')
-            time.sleep(5)
-        except Exception as e:
-            cprint(f"⚠️ Kali: An error occurred: {e}", 'white', 'on_red')
-            time.sleep(5)
-    # All dynamic slippage attempts failed (variant)
     cprint(f"💀 Kali: All dynamic slippage attempts failed for {QUOTE_TOKEN[-4:]} -> USDC (variant)", 'white', 'on_red')
     with open(PERMANENT_BLACKLIST, 'a') as f:
         f.write(f'{QUOTE_TOKEN}\n')
@@ -1714,76 +2194,85 @@ def market_sell(QUOTE_TOKEN, amount, slippage=SELL_SLIPPAGE_BPS):
 
 
 def kill_switch(token_mint_address):
+    """Close the position in full, with dust tolerance and correct precision.
+    Sells repeatedly until USD value <= DUST_USD_THRESHOLD or balance is zero.
+    """
+    max_attempts = 8
+    attempt = 0
+    while attempt < max_attempts:
+        attempt += 1
+        balance = get_position(token_mint_address)
+        price = ask_bid(token_mint_address) or 0
+        usd_value = (balance or 0) * (price or 0)
+        if usd_value <= DUST_USD_THRESHOLD or (balance or 0) <= 0:
+            break
 
-    ''' this function closes the position in full  '''
-
-    # if time is on the 5 minute do the balance check, if not grab from data/current_position.csv
-    balance = get_position(token_mint_address)
-
-    # get current price of token 
-    price = ask_bid(token_mint_address)
-
-    usd_value = balance * price
-
-    tp = SELL_AT_MULTIPLE * USDC_SIZE
-    sell_size = balance 
-    # round to 2 decimals
-    sell_size = round_down(sell_size, 2)
-    decimals = 0
-    decimals = get_decimals(token_mint_address)
-    #print(f'for {token_mint_address[-4:]} decimals is {decimals}')
-
-    sell_size = int(sell_size * 10 **decimals)
-    
-    #print(f'bal: {balance} price: {price} usdVal: {usd_value} TP: {tp} sell size: {sell_size} decimals: {decimals}')
-
-    while usd_value > 0:
-
-        # log this mint address to a file and save as a new line, keep the old lines there, so it will continue to grow this file is called data/closed_positions.txt
-        # only add it to the file if it's not already there
-        with open(CLOSED_POSITIONS_TXT, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]  # Strip the newline character from each line
-            if token_mint_address not in lines:  # Now the comparison should work as expected
-                with open(CLOSED_POSITIONS_TXT, 'a') as f:
-                    f.write(token_mint_address + '\n')
-
-        #print(f'for {token_mint_address[-4:]} closing position cause exit all positions is set to {EXIT_ALL_POSITIONS} and value is {usd_value} and tp is {tp} so closing...')
         try:
+            decimals = get_decimals(token_mint_address)
+        except Exception:
+            decimals = 6
+        lamports = int((balance or 0) * (10 ** decimals))
+        # Safety: leave 1 lamport to avoid rounding errors, but try to clear as much as possible
+        lamports = max(1, lamports - 1)
 
-            market_sell(token_mint_address, sell_size)
-            cprint(f'just made an order {token_mint_address[-4:]} selling {sell_size} ...', 'white', 'on_blue')
-            time.sleep(1)
-            market_sell(token_mint_address, sell_size)
-            cprint(f'just made an order {token_mint_address[-4:]} selling {sell_size} ...', 'white', 'on_blue')
-            time.sleep(1)
-            market_sell(token_mint_address, sell_size)
-            cprint(f'just made an order {token_mint_address[-4:]} selling {sell_size} ...', 'white', 'on_blue')
-            time.sleep(15)
-            
+        try:
+            ok = market_sell(token_mint_address, lamports)
+            if ok:
+                cprint(f'just made an order {token_mint_address[-4:]} selling {lamports} ...', 'white', 'on_blue')
+            time.sleep(2)
         except Exception as e:
             cprint(f'order error.. trying again: {e}', 'white', 'on_red')
+            time.sleep(2)
 
-        balance = get_position(token_mint_address)
-        price = ask_bid(token_mint_address)
-        usd_value = balance * price
-        tp = SELL_AT_MULTIPLE * USDC_SIZE
-        sell_size = balance 
-        
-        # down downwards to 2 decimals
-        sell_size = round_down(sell_size, 2)
-        
-        decimals = 0
-        decimals = get_decimals(token_mint_address)
-        #print(f'xxxxxxxxx for {token_mint_address[-4:]} decimals is {decimals}')
-        sell_size = int(sell_size * 10 **decimals)
-        #print(f'balance is {balance} and usd_value is {usd_value} EXIT ALL POSITIONS TRUE and sell_size is {sell_size} decimals is {decimals}')
-
-
-    else:
-        print(f'for {token_mint_address[-4:]} value is {usd_value} ')
-        #time.sleep(10)
-
+    # Mark as closed to prevent re-entry
+    try:
+        with open(CLOSED_POSITIONS_TXT, 'r') as f:
+            lines = [line.strip() for line in f.readlines()]
+        if token_mint_address not in lines:
+            with open(CLOSED_POSITIONS_TXT, 'a') as f:
+                f.write(token_mint_address + '\n')
+    except Exception:
+        pass
     print('closing position in full...')
+
+
+def append_recent_exit(token_mint_address: str):
+    """Record a recent full exit to a small file for cross-process cooldown guards."""
+    try:
+        os.makedirs('./data', exist_ok=True)
+        with open('./data/recently_exited.txt', 'a') as f:
+            f.write(f"{token_mint_address},{int(time.time())}\n")
+    except Exception:
+        pass
+
+
+def is_recently_exited(token_mint_address: str, within_seconds: int = 180) -> bool:
+    """Return True if this mint was fully exited within the last N seconds.
+    Used by listeners to avoid immediate re-entry after exits.
+    """
+    try:
+        path = './data/recently_exited.txt'
+        if not os.path.exists(path):
+            return False
+        now = int(time.time())
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(',')
+                if len(parts) != 2:
+                    continue
+                mint, ts = parts
+                if mint == token_mint_address:
+                    try:
+                        if now - int(ts) <= within_seconds:
+                            return True
+                    except Exception:
+                        continue
+        return False
+    except Exception:
+        return False
 
 
 def close_all_positions():

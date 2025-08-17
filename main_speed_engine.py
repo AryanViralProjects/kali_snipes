@@ -11,7 +11,9 @@ from datetime import datetime
 import dontshare as d
 import nice_funcs as n
 from config import *
-from raydium_listener import start_speed_engine
+from raydium_listener import start_speed_engine, listen_for_new_pools
+from pump_fun_listener import listen_for_pump_fun
+from virtuals_listener import listen_for_virtuals
 try:
     # Optional import; tracker runs as a standalone script in this mode
     from position_tracker_v2 import EnhancedPositionTracker
@@ -164,6 +166,34 @@ def run_speed_engine_main():
     except Exception as e:
         cprint(f"\n❌ Kali Speed Engine: Fatal error: {e}", 'red')
 
+
+async def run_multi_pool_async():
+    """
+    Run Raydium, Pump.fun, and Virtuals listeners concurrently.
+    """
+    cprint("🚀 KALI MULTI-POOL SPEED ENGINE STARTING...", 'white', 'on_blue', attrs=['bold'])
+    tasks = [
+        asyncio.create_task(listen_for_new_pools()),
+        asyncio.create_task(listen_for_pump_fun()),
+        asyncio.create_task(listen_for_virtuals()),
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+
+
+def run_multi_pool_engine():
+    """
+    Entry for multi-pool engine (async gather of all listeners).
+    """
+    try:
+        asyncio.run(run_multi_pool_async())
+    except KeyboardInterrupt:
+        cprint("\n⏹️ Kali Multi-Pool Engine: Shutting down gracefully...", 'yellow')
+
 def run_hybrid_mode():
     """
     Run both speed engine and original bot in parallel
@@ -205,12 +235,15 @@ if __name__ == "__main__":
         
         if mode == "speed":
             run_speed_engine_main()
+        elif mode == "multi":
+            run_multi_pool_engine()
         elif mode == "hybrid":
             run_hybrid_mode()
         else:
             print("Usage:")
-            print("  python main_speed_engine.py speed   # Speed Engine only")
+            print("  python main_speed_engine.py speed   # Raydium only")
+            print("  python main_speed_engine.py multi   # Raydium + Pump.fun + Virtuals")
             print("  python main_speed_engine.py hybrid  # Speed Engine + Original Bot")
     else:
-        # Default to speed engine only
-        run_speed_engine_main()
+        # Default to multi-pool engine
+        run_multi_pool_engine()
