@@ -40,7 +40,7 @@ USDC_CA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 MY_SOLANA_ADDERESS =  "B5MYmAaSAyiJ7dLNfyhHNMTyp3oGye6cYPe8h6taU6qp" # PUT YOUR ADDRESS HERE
 USDC_SIZE = 4
-MAX_POSITIONS = 1
+MAX_POSITIONS = 3
 SELL_AT_MULTIPLE = 1.5 # Exit at 50% profit (1.5x the investment) 
 STOP_LOSS_PERCENTAGE = -.6 # -.7 = down 70%, set to -.99 to essentialy disable
 SELL_AMOUNT_PERCENTAGE = 0.7 # Sell 70% of position when taking profits, keep 30% for bigger gains 
@@ -148,35 +148,35 @@ MAX_TOKEN_AGE_HOURS = 1.0  # Only trade tokens created within last 24 hours
 # Enable to reject older tokens quickly before heavy checks
 ENABLE_FRESHNESS_FILTER = True
 # Reject if more than this many 1-minute candles are present in recent window
-FRESH_MAX_1M_CANDLES = 10
+FRESH_MAX_1M_CANDLES = 8
 # OHLCV lookback window in minutes for freshness evaluation
-FRESH_INITIAL_WINDOW_MIN = 20
+FRESH_INITIAL_WINDOW_MIN = 15
 # Momentum check on first few 1m candles
 FRESH_ENABLE_MOMENTUM_CHECK = True
-FRESH_MIN_VOLUME_USD_FIRST5 = 5000  # Sum of volumes of first up-to-5 candles
+FRESH_MIN_VOLUME_USD_FIRST5 = 15000  # Sum of volumes of first up-to-5 candles
 # Catastrophic dump threshold between first two candles (80% drop)
-FRESH_CATASTROPHIC_DUMP_RATIO = 0.2
+FRESH_CATASTROPHIC_DUMP_RATIO = 0.3
 # Buy/Sell pressure check (proxy via Birdeye overview buy1h/sell1h unless unique data available)
 FRESH_ENABLE_PRESSURE_CHECK = True
-FRESH_MIN_BUY_SELL_RATIO = 2.0
+FRESH_MIN_BUY_SELL_RATIO = 3.0
 FRESH_USE_OVERVIEW_COUNTS_AS_PROXY = True
 
 # === PUMP FILTER (Target strong 5-minute momentum) ===
 ENABLE_PUMP_FILTER = True
 # Minimum USD volume across last 5 one-minute candles (softer)
-PUMP_MIN_VOL_5M_USD = 2500
+PUMP_MIN_VOL_5M_USD = 10000
 # Minimum number of green candles in last 5 (softer)
-PUMP_MIN_GREEN_CANDLES_5M = 2
+PUMP_MIN_GREEN_CANDLES_5M = 3
 # Minimum price change over last 5 minutes (softer)
-PUMP_MIN_PRICE_CHANGE_5M_PCT = 0.05
+PUMP_MIN_PRICE_CHANGE_5M_PCT = 0.15
 # Minimum liquidity to engage pumps (softer)
-PUMP_MIN_LIQUIDITY = 1500
+PUMP_MIN_LIQUIDITY = 3000
 # Minimum market cap to avoid micro-caps (allow unknown/zero)
 PUMP_MIN_MARKET_CAP = 0
 # Reject if top 10 holders exceed this (reuse MAX_TOP10_HOLDER_PERCENT if desired)
-PUMP_MAX_TOP10_HOLDER_PERCENT = 0.70
-PUMP_HOLDER_CHECK_MIN_WALLETS = 10
-PUMP_HOLDER_CHECK_MIN_TRADES = 5
+PUMP_MAX_TOP10_HOLDER_PERCENT = 0.50
+PUMP_HOLDER_CHECK_MIN_WALLETS = 20
+PUMP_HOLDER_CHECK_MIN_TRADES = 10
 # Name-based keyword blacklist (case-insensitive substring match)
 NAME_BLOCKLIST_KEYWORDS = [
     'deepseek',          # blocks Deepseek / Deepseek AI

@@ -1488,9 +1488,12 @@ def passes_pump_momentum_filter(token_mint_address: str, birdeye_api_key: str) -
         if liquidity < PUMP_MIN_LIQUIDITY:
             cprint(f"   🚫 Pump filter: Low liquidity (${liquidity:,.0f} < ${PUMP_MIN_LIQUIDITY:,.0f})", 'red')
             return False
-        if mc < PUMP_MIN_MARKET_CAP:
+        # Allow tokens with 0 market cap if they're very new (common for fresh tokens)
+        if mc < PUMP_MIN_MARKET_CAP and mc > 0:
             cprint(f"   🚫 Pump filter: Low market cap (${mc:,.0f} < ${PUMP_MIN_MARKET_CAP:,.0f})", 'red')
             return False
+        elif mc == 0:
+            cprint("   ℹ️ Pump filter: Market cap not available (very new token), continuing evaluation", 'yellow')
         # Only enforce holder concentration if we have basic activity/holders context
         if top10 is not None:
             try:

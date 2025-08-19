@@ -83,18 +83,9 @@ trigger_*.py
 check_wallet_balance.py
 simple_balance_check.py
 
-# Documentation drafts and project summaries
-project summary/
-*_SUMMARY.md
-FIXES_*.md
-FIX_*.md
-PNL_TRACKING_DOCUMENTATION.md
 
-# Data files that may contain sensitive information
-data/*.txt
-data/*.csv
-data/*.json
-!data/.gitkeep
+
+
 
 # Temporary logs
 *.log

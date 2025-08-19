@@ -24,8 +24,9 @@ Kali Sniper combines multi-source, real-time pool detection with layered intelli
     - See Pump Filter section below; rejects before heavy vetting if weak.
   - **Name blocklist**: Rejects tokens matching `NAME_BLOCKLIST_KEYWORDS`.
 
-- **Intelligence vetting (Birdeye + heuristics)**
-  - Runs `nice_funcs.pre_trade_token_vetting(...)` for comprehensive validation; see Security and Market Quality sections below.
+- **Enhanced Intelligence vetting (Birdeye + advanced heuristics + scoring)**
+  - Runs `enhanced_intelligence_engine.should_trade_token(...)` for comprehensive validation with scoring system
+  - See Enhanced Intelligence Engine section below for details
 
 - **Execution (Speed Engine)**
   - Fixed-size snipe (e.g., `$USDC_SIZE`) with Jupiter v6, versioned transactions, dynamic compute/prioritization.
@@ -109,6 +110,27 @@ Medium:
 
 ---
 
+### Enhanced Intelligence Engine
+The Enhanced Intelligence Engine is a new layer that builds upon the existing Birdeye-based security checks with additional validation methods and a scoring system.
+
+- **Social Validation Layer**: Checks for token legitimacy through name quality and would integrate with social media APIs in a full implementation
+- **On-Chain Analytics**: Analyzes unique wallet counts, trade frequency, and holder distribution
+- **Price Action Analysis**: Evaluates recent price momentum and stability
+- **Liquidity Depth Check**: Ensures sufficient liquidity for trading
+- **Composite Scoring System**: Calculates a score from 0-100 based on multiple factors:
+  - Liquidity (0-20 points)
+  - Holder count (0-15 points)
+  - Unique wallets (0-10 points)
+  - Trade volume (0-5 points)
+  - Base score of 50
+
+- Purpose
+  - Provides more nuanced decision making than simple pass/fail filters
+  - Reduces false positives from basic filters
+  - Allows for configurable sensitivity through score thresholds
+
+---
+
 ### Pre-buy guardrails (applied across all listeners)
 - **Global position cap**: If `get_active_position_count() ≥ MAX_POSITIONS`, skip.
 - **Sequential mode (optional)**: If enabled, skip when any position open (override for single-position mode).
@@ -147,3 +169,4 @@ Medium:
 - Tighten freshness: raise `FRESH_MIN_VOLUME_USD_FIRST5`, `FRESH_MIN_BUY_SELL_RATIO`.
 - Adjust risk: lower `MAX_TOP10_HOLDER_PERCENT` (e.g., 0.5) for stricter holder distribution.
 - Concurrency: set `ENABLE_SEQUENTIAL_MODE = False` and rely on `MAX_POSITIONS`.
+- Enhanced Intelligence: adjust `min_score` parameter in `should_trade_token()` for more/less selectivity.

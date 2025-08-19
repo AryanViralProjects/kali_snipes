@@ -1,0 +1,8 @@
+# Kali Intelligence Engine - Deployer Wallet Blacklist
+# Format: wallet_address,reason
+# This file tracks deployer wallets known for launching rug pulls or scam tokens
+#
+# Examples (uncomment to activate):
+# 9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM,multiple_scams
+#
+# Add new blacklisted deployers below:

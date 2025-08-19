@@ -11,6 +11,7 @@ from datetime import datetime
 import dontshare as d
 import nice_funcs as n
 from config import *
+from enhanced_intelligence_engine import should_trade_token, enhanced_token_vetting
 
 # Raydium Liquidity Pool V4 program ID
 RAYDIUM_LP_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
@@ -217,25 +218,31 @@ async def trigger_fast_snipe(token_address, signature):
         except Exception as pump_err:
             cprint(f"⚠️ Pump gate error (continuing to vetting): {pump_err}", 'yellow')
 
-        # === INTELLIGENCE ENGINE VETTING ===
-        cprint(f"🧠 Kali Intelligence: Running comprehensive vetting pipeline...", 'white', 'on_blue', attrs=['bold'])
+        # === ENHANCED INTELLIGENCE ENGINE VETTING ===
+        cprint(f"🧠 Kali Intelligence: Running enhanced vetting pipeline...", 'white', 'on_blue', attrs=['bold'])
+        cprint(f"   📋 Token address: {token_address}", 'cyan')
         
-        # Run the comprehensive intelligence vetting
+        # Run the enhanced intelligence vetting
         # Name keyword blocklist using Birdeye name
         overview = n.get_token_overview(token_address)
         tname = str(overview.get('name', '')).lower()
+        cprint(f"   🏷️ Token name: {overview.get('name','Unknown')}", 'cyan')
         if any(kw in tname for kw in NAME_BLOCKLIST_KEYWORDS):
             cprint(f"🚫 Name gate: blocked by keyword list ({overview.get('name','')})", 'red')
             return
-        is_safe = n.pre_trade_token_vetting(token_address, d.birdeye, d.rpc_url)
+            
+        # Use enhanced intelligence engine for better decision making
+        cprint(f"   🔍 Running enhanced intelligence engine...", 'cyan')
+        is_safe = should_trade_token(token_address, min_score=65)  # Adjust score threshold as needed
+        cprint(f"   ✅ Enhanced intelligence engine completed. Result: {'APPROVED' if is_safe else 'REJECTED'}", 'cyan')
         
         if not is_safe:
-            cprint(f"🚫 Kali Intelligence: Token {token_address[-6:]} REJECTED by intelligence engine", 'red', attrs=['bold'])
+            cprint(f"🚫 Kali Intelligence: Token {token_address[-6:]} REJECTED by enhanced intelligence engine", 'red', attrs=['bold'])
             
             # Log rejected tokens for analysis
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             with open('./data/intelligence_rejections.txt', 'a') as f:
-                f.write(f'{timestamp},{token_address},{signature},INTELLIGENCE_REJECTED\n')
+                f.write(f'{timestamp},{token_address},{signature},ENHANCED_INTELLIGENCE_REJECTED\\n')
             return
         
         # === INTELLIGENCE APPROVED - EXECUTE DYNAMIC ULTRA-FAST BUY ===
